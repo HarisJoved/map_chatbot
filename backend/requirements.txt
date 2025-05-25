@@ -5,3 +5,5 @@ pydantic
 python-dotenv
 httpx
 langchain-google-genai
+langchain_neo4j
+numpy
