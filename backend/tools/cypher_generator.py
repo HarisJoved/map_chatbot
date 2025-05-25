@@ -556,11 +556,7 @@ def execute_dynamic_query(user_input, context=None):
                     
                     {formatted_context}
                     
-                    Respond in a friendly, conversational way. Include specific details from the query results.
-                    Clearly state that this information comes from the database.
-                    If the results don't fully answer the question, say so, but provide what information you can from these results.
-                    
-                    Your response should be factual, professional, and concise, focusing only on the information provided in the database results.
+                    Respond in a friendly, conversational way. Use HTML formatting (such as <b>, <i>, <ul>, <table>, etc.) to clearly present the information. Clearly state that this information comes from the database. If the results don't fully answer the question, say so, but provide what information you can from these results. Your response should be factual, professional, and concise, focusing only on the information provided in the database results.
                     """
                     response = llm.invoke(prompt)
                     logger.info("Successfully formatted dynamic query results")
@@ -596,8 +592,7 @@ def execute_dynamic_query(user_input, context=None):
                             
                             {formatted_context}
                             
-                            Respond in a friendly, conversational way. Include specific details from the query results.
-                            Clearly state that this information comes from the database.
+                            Respond in a friendly, conversational way. Use HTML formatting (such as <b>, <i>, <ul>, <table>, etc.) to clearly present the information. Clearly state that this information comes from the database. If the results don't fully answer the question, say so, but provide what information you can from these results. Your response should be factual, professional, and concise, focusing only on the information provided in the database results.
                             """
                             response = llm.invoke(prompt)
                             logger.info("Successfully formatted repaired query results")
@@ -617,48 +612,39 @@ def execute_dynamic_query(user_input, context=None):
         return {"result": None}
 
 def format_query_results(results, user_input):
-    """Format query results in a readable way for the LLM"""
+    """Format query results as an HTML table for the LLM"""
     try:
         if not results or len(results) == 0:
-            return "No results found in the database."
-        
-        # Format the results as a readable table
-        formatted_text = "Query Results from Database:\n\n"
-        
+            return "<i>No results found in the database.</i>"
         # Get all possible keys from all results
         all_keys = set()
         for item in results:
             all_keys.update(item.keys())
-        
-        # Create a table header
-        header = " | ".join(all_keys)
-        separator = "-" * len(header)
-        formatted_text += f"{header}\n{separator}\n"
-        
+        all_keys = list(all_keys)
+        # Create HTML table header
+        table = '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;">'
+        table += '<thead><tr>' + ''.join(f'<th>{key}</th>' for key in all_keys) + '</tr></thead><tbody>'
         # Add each result as a row
         for item in results:
-            row_values = []
+            row = '<tr>'
             for key in all_keys:
                 value = item.get(key, "")
                 if isinstance(value, list):
-                    if value:
-                        value = ", ".join(str(v) for v in value)
-                    else:
-                        value = "none"
+                    value = ', '.join(str(v) for v in value) if value else 'none'
                 elif value is None:
-                    value = "null"
-                row_values.append(str(value))
-            formatted_text += " | ".join(row_values) + "\n"
-        
-        return formatted_text
+                    value = 'null'
+                row += f'<td>{value}</td>'
+            row += '</tr>'
+            table += row
+        table += '</tbody></table>'
+        return table
     except Exception as e:
         logger.error(f"Error formatting query results: {e}")
-        
-        # Fallback to simple formatting
-        simple_text = "Query Results from Database:\n\n"
+        # Fallback to simple HTML formatting
+        simple_text = "<ul>"
         for i, item in enumerate(results):
-            simple_text += f"Result {i+1}: {item}\n"
-        
+            simple_text += f"<li>Result {i+1}: {item}</li>"
+        simple_text += "</ul>"
         return simple_text
 
 def repair_query_from_error(query, error_message, error_type):

@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import Map, { Marker, Popup } from 'react-map-gl';
-import { DeckGL, ScatterplotLayer, GeoJsonLayer } from 'deck.gl';
+import { DeckGL, GeoJsonLayer } from 'deck.gl';
 import styled from 'styled-components';
 import maplibregl from 'maplibre-gl';
+import RoomIcon from '@mui/icons-material/Room';
+import parse from 'html-react-parser';
 
-// Use OpenMapTiles Streets style for more details
+// Use OpenMapTiles Streets style
 const MAPLIBRE_STYLE = 'https://tiles.stadiamaps.com/styles/alidade_smooth.json';
 
 const MapContainer = styled.div`
@@ -13,13 +15,12 @@ const MapContainer = styled.div`
   position: relative;
 `;
 
-const CustomMarker = styled.div`
-  width: 20px;
-  height: 20px;
-  background-color: #01a3a4;
-  border-radius: 50%;
-  border: 2px solid white;
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.3);
+const StyledDeck = styled(DeckGL)`
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
 `;
 
 const ZoomControls = styled.div`
@@ -62,69 +63,21 @@ const PopupPostcode = styled.div`
 `;
 
 const MapView = ({ viewState, setViewState, selectedLocation }) => {
-  const [layers, setLayers] = useState([]);
-  const [showPopup, setShowPopup] = useState(true);
+  const [showPopup, setShowPopup] = useState(false);
+  const [locationInfo, setLocationInfo] = useState(null);
+  const [loadingInfo, setLoadingInfo] = useState(false);
+  const [errorInfo, setErrorInfo] = useState(null);
 
   useEffect(() => {
-    if (selectedLocation) {
-      setShowPopup(true);
-      const newLayers = [
-        new ScatterplotLayer({
-          id: 'selected-location',
-          data: [selectedLocation],
-          pickable: true,
-          opacity: 0.8,
-          stroked: true,
-          filled: true,
-          radiusScale: 10,
-          radiusMinPixels: 10,
-          radiusMaxPixels: 100,
-          lineWidthMinPixels: 1,
-          getPosition: d => [d.longitude, d.latitude],
-          getRadius: d => 500,
-          getFillColor: [1, 163, 164, 140],
-          getLineColor: [1, 163, 164]
-        })
-      ];
-      setLayers(newLayers);
-    } else {
-      setLayers([]);
-      setShowPopup(false);
-    }
+    setShowPopup(false);
+    setLocationInfo(null);
+    setErrorInfo(null);
   }, [selectedLocation]);
 
-  // Example GeoJSON data for roads (simplified)
+  // Simple example roads GeoJSON
   const roads = {
     type: 'FeatureCollection',
-    features: [
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [-122.41, 37.78],
-            [-122.42, 37.79],
-            [-122.43, 37.78]
-          ]
-        },
-        properties: {
-          name: 'Main Ave'
-        }
-      },
-      {
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [-122.41, 37.78],
-            [-122.40, 37.77]
-          ]
-        },
-        properties: {
-          name: 'North Ave'
-        }
-      }
-    ]
+    features: [ /* ... your features ... */ ]
   };
 
   const roadLayer = new GeoJsonLayer({
@@ -136,38 +89,75 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
     getLineWidth: 5
   });
 
-  const allLayers = [...layers, roadLayer];
+  const allLayers = [roadLayer];
 
-  const handleZoomIn = () => {
-    setViewState(vs => ({ ...vs, zoom: Math.min((vs.zoom || 0) + 1, 20) }));
-  };
-  const handleZoomOut = () => {
-    setViewState(vs => ({ ...vs, zoom: Math.max((vs.zoom || 0) - 1, 1) }));
+  const handleZoomIn = () => setViewState(vs => ({ ...vs, zoom: Math.min((vs.zoom||0) +1, 20) }));
+  const handleZoomOut = () => setViewState(vs => ({ ...vs, zoom: Math.max((vs.zoom||0) -1, 1) }));
+
+  const handleMarkerClick = async () => {
+    setShowPopup(true);
+    setLoadingInfo(true);
+    setErrorInfo(null);
+    setLocationInfo(null);
+    try {
+      const res = await fetch('http://localhost:8000/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: selectedLocation.address })
+      });
+      const data = await res.json();
+      setLocationInfo(data.response);
+    } catch {
+      setErrorInfo('Failed to fetch location info.');
+    } finally {
+      setLoadingInfo(false);
+    }
   };
 
   return (
     <MapContainer>
-      <DeckGL
+      {/* DeckGL + Map only handles rendering map and layers */}
+      <StyledDeck
         layers={allLayers}
         viewState={viewState}
-        onViewStateChange={evt => setViewState(evt.viewState)}
+        onViewStateChange={e => setViewState(e.viewState)}
         controller={true}
       >
         <Map
           mapLib={maplibregl}
           mapStyle={MAPLIBRE_STYLE}
+        />
+      </StyledDeck>
+
+      {/* HTML Marker rendered on top of DeckGL canvas */}
+      {selectedLocation && (
+        <Map
+          mapLib={maplibregl}
+          mapStyle={MAPLIBRE_STYLE}
+          interactive={false}
+          viewState={viewState}
+          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
         >
-          {selectedLocation && (
-            <Marker
-              longitude={selectedLocation.longitude}
-              latitude={selectedLocation.latitude}
-              anchor="bottom"
-              onClick={() => setShowPopup(true)}
+          <Marker
+            longitude={selectedLocation.longitude}
+            latitude={selectedLocation.latitude}
+            anchor="bottom"
+          >
+            <button
+              onClick={handleMarkerClick}
+              style={{
+                background: 'none', border: 'none', padding: 0,
+                margin: 0, cursor: 'pointer', outline: 'none',
+                pointerEvents: 'auto'
+              }}
+              title="Show location info"
+              aria-label="Show location info"
             >
-              <CustomMarker />
-            </Marker>
-          )}
-          {selectedLocation && showPopup && (
+              <RoomIcon style={{ fontSize: 36, color: '#d32f2f', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))' }} />
+            </button>
+          </Marker>
+
+          {showPopup && (
             <Popup
               longitude={selectedLocation.longitude}
               latitude={selectedLocation.latitude}
@@ -178,17 +168,21 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
               <PopupContent>
                 <PopupAddress>{selectedLocation.address}</PopupAddress>
                 <PopupPostcode>{selectedLocation.postcode}</PopupPostcode>
+                {loadingInfo && <div>Loading info...</div>}
+                {errorInfo && <div style={{ color: 'red' }}>{errorInfo}</div>}
+                {locationInfo && <div>{parse(locationInfo)}</div>}
               </PopupContent>
             </Popup>
           )}
         </Map>
-        <ZoomControls>
-          <ZoomButton onClick={handleZoomIn} title="Zoom In">+</ZoomButton>
-          <ZoomButton onClick={handleZoomOut} title="Zoom Out">-</ZoomButton>
-        </ZoomControls>
-      </DeckGL>
+      )}
+
+      <ZoomControls>
+        <ZoomButton onClick={handleZoomIn} title="Zoom In">+</ZoomButton>
+        <ZoomButton onClick={handleZoomOut} title="Zoom Out">-</ZoomButton>
+      </ZoomControls>
     </MapContainer>
   );
 };
 
-export default MapView; 
+export default MapView;

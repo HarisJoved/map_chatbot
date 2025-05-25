@@ -1,23 +1,41 @@
 import React, { useState } from 'react';
 import styled from 'styled-components';
+import { FaBars } from 'react-icons/fa';
+import parse from 'html-react-parser';
 
 const ChatContainer = styled.div`
-  width: 300px;
+  width: ${props => (props.minimized ? '50px' : '300px')};
+  min-width: 50px;
   height: 100%;
   background-color: #fff;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   z-index: 10;
+  transition: width 0.3s cubic-bezier(0.4,0,0.2,1);
+  overflow: hidden;
 `;
 
-const ChatHeader = styled.div`
+const ChatHeaderBar = styled.div`
+  display: flex;
+  align-items: center;
   padding: 15px;
   background-color: #01a3a4;
   color: white;
   font-weight: bold;
   font-size: 1.2rem;
   border-radius: 0 0 5px 0;
+`;
+
+const HamburgerButton = styled.button`
+  background: none;
+  border: none;
+  color: white;
+  font-size: 1.5rem;
+  margin-right: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
 `;
 
 const MessagesContainer = styled.div`
@@ -86,6 +104,7 @@ const ChatPanel = ({ onLocationSelect }) => {
     { id: 1, text: "Hello! How can I help you navigate the city?", isUser: false },
   ]);
   const [newMessage, setNewMessage] = useState("");
+  const [minimized, setMinimized] = useState(false);
 
   const handleSendMessage = async () => {
     if (newMessage.trim() === "") return;
@@ -135,27 +154,36 @@ const ChatPanel = ({ onLocationSelect }) => {
   };
 
   return (
-    <ChatContainer>
-      <ChatHeader>Chat</ChatHeader>
-      <MessagesContainer>
-        {messages.map(message => (
-          <Message key={message.id} isUser={message.isUser}>
-            {message.text}
-          </Message>
-        ))}
-      </MessagesContainer>
-      <ChatInputContainer>
-        <ChatInput 
-          type="text" 
-          placeholder="Type your message here..." 
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          onKeyPress={handleKeyPress}
-        />
-        <SendButton onClick={handleSendMessage}>
-          Send
-        </SendButton>
-      </ChatInputContainer>
+    <ChatContainer minimized={minimized}>
+      <ChatHeaderBar>
+        <HamburgerButton onClick={() => setMinimized(m => !m)} aria-label={minimized ? "Expand chat" : "Minimize chat"}>
+          <FaBars />
+        </HamburgerButton>
+        {!minimized && 'Chat'}
+      </ChatHeaderBar>
+      {!minimized && (
+        <>
+          <MessagesContainer>
+            {messages.map(message => (
+              <Message key={message.id} isUser={message.isUser}>
+                {message.isUser ? message.text : parse(message.text)}
+              </Message>
+            ))}
+          </MessagesContainer>
+          <ChatInputContainer>
+            <ChatInput 
+              type="text" 
+              placeholder="Type your message here..." 
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+            />
+            <SendButton onClick={handleSendMessage}>
+              Send
+            </SendButton>
+          </ChatInputContainer>
+        </>
+      )}
     </ChatContainer>
   );
 };
