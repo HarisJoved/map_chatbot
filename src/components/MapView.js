@@ -62,8 +62,9 @@ const PopupPostcode = styled.div`
   font-size: 0.95em;
 `;
 
-const MapView = ({ viewState, setViewState, selectedLocation }) => {
+const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations = [] }) => {
   const [showPopup, setShowPopup] = useState(false);
+  const [popupLocation, setPopupLocation] = useState(null);
   const [locationInfo, setLocationInfo] = useState(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [errorInfo, setErrorInfo] = useState(null);
@@ -72,7 +73,8 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
     setShowPopup(false);
     setLocationInfo(null);
     setErrorInfo(null);
-  }, [selectedLocation]);
+    setPopupLocation(null);
+  }, [displayedLocations]);
 
   // Simple example roads GeoJSON
   const roads = {
@@ -94,8 +96,9 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
   const handleZoomIn = () => setViewState(vs => ({ ...vs, zoom: Math.min((vs.zoom||0) +1, 20) }));
   const handleZoomOut = () => setViewState(vs => ({ ...vs, zoom: Math.max((vs.zoom||0) -1, 1) }));
 
-  const handleMarkerClick = async () => {
+  const handleMarkerClick = async (loc) => {
     setShowPopup(true);
+    setPopupLocation(loc);
     setLoadingInfo(true);
     setErrorInfo(null);
     setLocationInfo(null);
@@ -103,7 +106,7 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
       const res = await fetch('http://localhost:8000/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: selectedLocation.address })
+        body: JSON.stringify({ message: loc.address })
       });
       const data = await res.json();
       setLocationInfo(data.response);
@@ -116,7 +119,6 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
 
   return (
     <MapContainer>
-      {/* DeckGL + Map only handles rendering map and layers */}
       <StyledDeck
         layers={allLayers}
         viewState={viewState}
@@ -128,23 +130,23 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
           mapStyle={MAPLIBRE_STYLE}
         />
       </StyledDeck>
-
-      {/* HTML Marker rendered on top of DeckGL canvas */}
-      {selectedLocation && (
-        <Map
-          mapLib={maplibregl}
-          mapStyle={MAPLIBRE_STYLE}
-          interactive={false}
-          viewState={viewState}
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
-        >
+      {/* Single overlay Map for all markers */}
+      <Map
+        mapLib={maplibregl}
+        mapStyle={MAPLIBRE_STYLE}
+        interactive={false}
+        viewState={viewState}
+        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
+      >
+        {displayedLocations.map((loc, idx) => (
           <Marker
-            longitude={selectedLocation.longitude}
-            latitude={selectedLocation.latitude}
+            key={loc.address + loc.postcode + idx}
+            longitude={loc.longitude}
+            latitude={loc.latitude}
             anchor="bottom"
           >
             <button
-              onClick={handleMarkerClick}
+              onClick={() => handleMarkerClick(loc)}
               style={{
                 background: 'none', border: 'none', padding: 0,
                 margin: 0, cursor: 'pointer', outline: 'none',
@@ -156,27 +158,25 @@ const MapView = ({ viewState, setViewState, selectedLocation }) => {
               <RoomIcon style={{ fontSize: 36, color: '#d32f2f', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))' }} />
             </button>
           </Marker>
-
-          {showPopup && (
-            <Popup
-              longitude={selectedLocation.longitude}
-              latitude={selectedLocation.latitude}
-              anchor="top"
-              onClose={() => setShowPopup(false)}
-              closeOnClick={false}
-            >
-              <PopupContent>
-                <PopupAddress>{selectedLocation.address}</PopupAddress>
-                <PopupPostcode>{selectedLocation.postcode}</PopupPostcode>
-                {loadingInfo && <div>Loading info...</div>}
-                {errorInfo && <div style={{ color: 'red' }}>{errorInfo}</div>}
-                {locationInfo && <div>{parse(locationInfo)}</div>}
-              </PopupContent>
-            </Popup>
-          )}
-        </Map>
-      )}
-
+        ))}
+        {showPopup && popupLocation && (
+          <Popup
+            longitude={popupLocation.longitude}
+            latitude={popupLocation.latitude}
+            anchor="top"
+            onClose={() => setShowPopup(false)}
+            closeOnClick={false}
+          >
+            <PopupContent>
+              <PopupAddress>{popupLocation.address}</PopupAddress>
+              <PopupPostcode>{popupLocation.postcode}</PopupPostcode>
+              {loadingInfo && <div>Loading info...</div>}
+              {errorInfo && <div style={{ color: 'red' }}>{errorInfo}</div>}
+              {locationInfo && <div>{parse(locationInfo)}</div>}
+            </PopupContent>
+          </Popup>
+        )}
+      </Map>
       <ZoomControls>
         <ZoomButton onClick={handleZoomIn} title="Zoom In">+</ZoomButton>
         <ZoomButton onClick={handleZoomOut} title="Zoom Out">-</ZoomButton>

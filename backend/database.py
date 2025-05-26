@@ -74,7 +74,7 @@ class Neo4jConnection:
                    l.postcode as postcode, 
                    l.latitude as latitude, 
                    l.longitude as longitude
-            ORDER BY length(l.address) ASC
+            ORDER BY size(l.address) ASC
             LIMIT $limit
             """
             

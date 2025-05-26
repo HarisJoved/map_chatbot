@@ -99,12 +99,13 @@ const SendButton = styled.button`
   }
 `;
 
-const ChatPanel = ({ onLocationSelect }) => {
+const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
   const [messages, setMessages] = useState([
     { id: 1, text: "Hello! How can I help you navigate the city?", isUser: false },
   ]);
   const [newMessage, setNewMessage] = useState("");
   const [minimized, setMinimized] = useState(false);
+  const [lastLocations, setLastLocations] = useState([]);
 
   const handleSendMessage = async () => {
     if (newMessage.trim() === "") return;
@@ -127,9 +128,13 @@ const ChatPanel = ({ onLocationSelect }) => {
       });
       const data = await res.json();
       
-      // Check if the response contains location data
+      // If response contains locations array, store and show them
+      if (data.locations && Array.isArray(data.locations) && data.locations.length > 0) {
+        setLastLocations(data.locations);
+        onShowLocations(data.locations);
+      }
+      // If response contains a single location
       if (data.location) {
-        // Update the map with the location
         onLocationSelect(data.location);
       }
 
@@ -152,6 +157,17 @@ const ChatPanel = ({ onLocationSelect }) => {
       handleSendMessage();
     }
   };
+
+  // If user asks to show these locations, trigger onShowLocations
+  React.useEffect(() => {
+    if (messages.length > 0) {
+      const lastMsg = messages[messages.length-1];
+      if (lastMsg.isUser && /show (me )?these locations/i.test(lastMsg.text) && lastLocations.length > 0) {
+        onShowLocations(lastLocations);
+      }
+    }
+    // eslint-disable-next-line
+  }, [messages]);
 
   return (
     <ChatContainer minimized={minimized}>
