@@ -3,16 +3,34 @@ import styled from 'styled-components';
 import { FaBars } from 'react-icons/fa';
 import parse from 'html-react-parser';
 
+const FloatingHamburger = styled.button`
+  position: fixed;
+  left: 10px;
+  top: 10px;
+  transform: none;
+  background: #01a3a4;
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  z-index: 1000;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  cursor: pointer;
+`;
+
 const ChatContainer = styled.div`
-  width: ${props => (props.minimized ? '50px' : '300px')};
-  min-width: 50px;
+  width: 300px;
   height: 100%;
   background-color: #fff;
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   z-index: 10;
-  transition: width 0.3s cubic-bezier(0.4,0,0.2,1);
   overflow: hidden;
 `;
 
@@ -170,15 +188,19 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
   }, [messages]);
 
   return (
-    <ChatContainer minimized={minimized}>
-      <ChatHeaderBar>
-        <HamburgerButton onClick={() => setMinimized(m => !m)} aria-label={minimized ? "Expand chat" : "Minimize chat"}>
+    <>
+      {minimized ? (
+        <FloatingHamburger onClick={() => setMinimized(false)} aria-label="Expand chat">
           <FaBars />
-        </HamburgerButton>
-        {!minimized && 'Chat'}
-      </ChatHeaderBar>
-      {!minimized && (
-        <>
+        </FloatingHamburger>
+      ) : (
+        <ChatContainer>
+          <ChatHeaderBar>
+            <HamburgerButton onClick={() => setMinimized(true)} aria-label="Minimize chat">
+              <FaBars />
+            </HamburgerButton>
+            Chat
+          </ChatHeaderBar>
           <MessagesContainer>
             {messages.map(message => (
               <Message key={message.id} isUser={message.isUser}>
@@ -198,9 +220,9 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
               Send
             </SendButton>
           </ChatInputContainer>
-        </>
+        </ChatContainer>
       )}
-    </ChatContainer>
+    </>
   );
 };
 
