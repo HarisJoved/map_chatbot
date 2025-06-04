@@ -119,7 +119,7 @@ const SendButton = styled.button`
 
 const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
   const [messages, setMessages] = useState([
-    { id: 1, text: "Hello! How can I help you navigate the city?", isUser: false },
+    { id: 1, text: "Hello! I am your assistant for road defects, sensors, detection events, CRM cases, and road segments. Ask me anything about defects, sensors, events, cases, or roads!", isUser: false },
   ]);
   const [newMessage, setNewMessage] = useState("");
   const [minimized, setMinimized] = useState(false);

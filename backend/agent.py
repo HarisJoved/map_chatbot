@@ -12,293 +12,252 @@ from langchain.schema import StrOutputParser
 
 # Create a set of tools
 from langchain.tools import Tool
-from tools.vector import get_crime_location
+from tools.vector import get_defect_location
 from tools.cypher import cypher_qa
 from tools.cypher_generator import execute_dynamic_query
 from tools.general_conversation import is_general_conversation, handle_general_chat
 
+# --- BEGIN NEW SCHEMA HARDCODE ---
+graph_schema = {
+    "nodes": {
+        "Defect": {
+            "label": "Defect",
+            "properties": {
+                "defect_id": "String",
+                "category": "String",
+                "description": "String",
+                "detectedAt": "DateTime",
+                "severity": "String",
+                "timesDetected": "Integer",
+                "location_id": "String"
+            }
+        },
+        "Sensor": {
+            "label": "Sensor",
+            "properties": {
+                "sensor_id": "String",
+                "category": "String",
+                "type": "String",
+                "location_lat": "Float",
+                "location_lon": "Float",
+                "accuracy": "Float",
+                "status": "String",
+                "controlledProperty": "String"
+            }
+        },
+        "DetectionEvent": {
+            "label": "DetectionEvent",
+            "properties": {
+                "event_id": "String",
+                "observedAt": "DateTime",
+                "image_url": "String",
+                "result": "String"
+            }
+        },
+        "CRMCase": {
+            "label": "CRMCase",
+            "properties": {
+                "case_id": "String",
+                "status": "String",
+                "createdAt": "DateTime",
+                "severity": "String",
+                "description": "String"
+            }
+        },
+        "Location": {
+            "label": "Location",
+            "properties": {
+                "location_id": "String",
+                "location_lat": "Float",
+                "location_lon": "Float"
+            }
+        }
+    },
+    "relationships": [
+        {
+            "type": "REPORTED_BY",
+            "from": "DetectionEvent",
+            "to": "Defect"
+        },
+        {
+            "type": "DETECTED_BY_SENSOR",
+            "from": "DetectionEvent",
+            "to": "Sensor"
+        },
+        {
+            "type": "ASSOCIATED_WITH",
+            "from": "CRMCase",
+            "to": "Defect"
+        },
+        {
+            "type": "HAS_LOCATION",
+            "from": "Defect",
+            "to": "Location"
+        }
+    ],
+    "rules": {
+        "CRMCaseCreation": "Create CRMCase only if defect is detected by 4 or more detection events (any sensors)."
+    }
+}
+
+# --- END NEW SCHEMA HARDCODE ---
+
 # Create the agent
 try:
-    # Create a more versatile chat prompt that handles both crime questions and general conversation
+    def get_system_prompt():
+        # Format the schema for the LLM
+        schema_str = "Nodes and Properties:\n"
+        for node, node_info in graph_schema["nodes"].items():
+            schema_str += f"- {node}: {', '.join([f'{k} ({v})' for k, v in node_info['properties'].items()])}\n"
+        schema_str += "Relationships:\n"
+        for rel in graph_schema["relationships"]:
+            schema_str += f"- {rel['type']}: {rel['from']} -> {rel['to']}\n"
+        schema_str += "Rules:\n"
+        for rule, desc in graph_schema["rules"].items():
+            schema_str += f"- {rule}: {desc}\n"
+        return f"""You are a helpful assistant for a Neo4j graph database about road defects, sensors, detection events, CRM cases, and road segments.\n\nUse only the information in the following schema to answer questions. If you don't know the answer from the database, say so.\n\nDatabase Schema:\n{schema_str}\n"""
+
     chat_prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a friendly and knowledgeable assistant specializing in crime investigation data using the POLE model (Person, Object, Location, Event).
-When asked about crimes, provide detailed information about incidents, locations, people involved, and related evidence or objects.
-When engaged in general conversation, respond in a warm, professional manner as if speaking to an investigator.
-Always maintain a helpful, factual tone regardless of the topic."""),
+        ("system", get_system_prompt()),
         ("human", "{input}"),
     ])
 
     general_chat = chat_prompt | llm | StrOutputParser()
 
     def generate_response(user_input, recent_messages=None, context=None):
-        """Generate a response based on user input and conversation context"""
         try:
-            # Check if the input is general conversation
+            logger.info(f"Received user input: {user_input}")
+            user_lower = user_input.lower()
+            # 1. General conversation check
             if is_general_conversation(user_input):
-                logger.info(f"TOOL USED: general_conversation.handle_general_chat - User input: '{user_input}'")
                 general_result = handle_general_chat(user_input)
                 if general_result and "output" in general_result and general_result["output"]:
-                    logger.info("RESPONSE FROM: general_conversation.handle_general_chat - Using general conversation response")
                     return general_result["output"]
-            
-            # First try to get information about specific crime locations
-            logger.info(f"TOOL USED: vector.get_crime_location - Attempting to find location info for: '{user_input}'")
-            location_info = get_crime_location(user_input)
-            if location_info and "output" in location_info and location_info["output"]:
-                logger.info("RESPONSE FROM: vector.get_crime_location - Using crime location information")
-                return location_info["output"]
-            
-            # If no specific location info, try standard cypher query
-            logger.info(f"TOOL USED: cypher.cypher_qa - Attempting standard cypher query for: '{user_input}'")
-            cypher_result = cypher_qa(user_input)
-            
-            # If standard cypher returned valid database results, use them
-            if cypher_result and "result" in cypher_result and cypher_result["result"]:
-                logger.info("RESPONSE FROM: cypher.cypher_qa - Using crime information from database")
-                return cypher_result["result"]
-            else:
-                logger.info("Standard cypher query returned no results, trying dynamic query")
-            
-            # Try dynamic query generation for all crime-related queries
-            logger.info(f"TOOL USED: cypher_generator.execute_dynamic_query - Attempting dynamic cypher query for: '{user_input}'")
+            # 2. Try LLM/dynamic Cypher generator for all database questions
             dynamic_result = execute_dynamic_query(user_input, context)
             if dynamic_result and "result" in dynamic_result and dynamic_result["result"]:
-                logger.info("RESPONSE FROM: cypher_generator.execute_dynamic_query - Using dynamically generated query results")
                 return dynamic_result["result"]
-            
-            # If all database approaches fail, try specific entity searches
-            logger.info("All standard database approaches failed, trying direct entity searches")
-            
-            # Extract potential person names from query
-            import re
-            name_match = re.search(r'(?:about|for|on|who is|find)\s+([A-Z][a-z]+\s+[A-Z][a-z]+)', user_input)
-            if name_match or "name" in user_input.lower():
-                person_name = name_match.group(1) if name_match else user_input.split()[-2:]
-                logger.info(f"Attempting direct Person search for: {person_name}")
-                
-                # Direct query for Person entity
-                person_query = """
-                MATCH (p:Person)
-                WHERE toLower(p.name + ' ' + p.surname) CONTAINS toLower($name)
-                OPTIONAL MATCH (p)-[:INVOLVED_IN]->(c:Crime)
-                OPTIONAL MATCH (p)-[:HAS_PHONE]->(ph:Phone)
-                OPTIONAL MATCH (p)-[:CURRENT_ADDRESS]->(l:Location)
-                RETURN p.name AS name, p.surname AS surname, p.age AS age,
-                       collect(distinct c.type) AS crimes,
-                       collect(distinct l.address) AS addresses,
-                       collect(distinct ph.phoneNo) AS phone_numbers
+            # 3. Fallback: use hardcoded Cypher queries for simple entity types
+            # Defect queries
+            if any(word in user_lower for word in ["defect", "issue", "problem", "fault"]):
+                cypher = """
+                MATCH (d:Defect)
+                WHERE toLower(d.description) CONTAINS toLower($search)
+                   OR toLower(d.category) CONTAINS toLower($search)
+                OPTIONAL MATCH (e:DetectionEvent)-[:REPORTED_BY]->(d)
+                OPTIONAL MATCH (c:CRMCase)-[:ASSOCIATED_WITH]->(d)
+                RETURN d.defect_id AS defect_id, d.category AS category, d.description AS description, d.severity AS severity, d.timesDetected AS timesDetected, collect(DISTINCT e.event_id) AS detection_events, collect(DISTINCT c.case_id) AS crm_cases
                 LIMIT 5
                 """
-                
-                try:
-                    search_name = name_match.group(1) if name_match else " ".join(user_input.split()[-2:])
-                    person_result = graph.query(person_query, {"name": search_name})
-                    
-                    if person_result and len(person_result) > 0:
-                        logger.info(f"Found {len(person_result)} person records")
-                        
-                        # Format person results
-                        person_info = "\n\n".join([
-                            f"Name: {item['name']} {item['surname']}\n" +
-                            f"Age: {item['age'] if item['age'] else 'Unknown'}\n" +
-                            f"Involved in crimes: {', '.join(item['crimes']) if item['crimes'] else 'None on record'}\n" +
-                            f"Addresses: {', '.join(item['addresses']) if item['addresses'] else 'Unknown'}\n" +
-                            f"Phone: {', '.join(item['phone_numbers']) if item['phone_numbers'] else 'Unknown'}"
-                            for item in person_result
-                        ])
-                        
-                        prompt = f"""
-                        Based on the crime database information about this person:
-                        
-                        {person_info}
-                        
-                        Answer the user's question: "{user_input}"
-                        
-                        Only use the information provided above from the database. Make it clear this information is from the criminal records database.
-                        """
-                        
-                        response = llm.invoke(prompt)
-                        logger.info("RESPONSE FROM: direct person search - Using person information")
-                        return response.content
-                except Exception as e:
-                    logger.error(f"Error in direct person search: {e}")
-            
-            # Try vehicle search for car-related queries
-            vehicle_indicators = ["car", "vehicle", "truck", "van", "motorcycle", "registration", "reg"]
-            if any(indicator in user_input.lower() for indicator in vehicle_indicators):
-                logger.info(f"Attempting direct Vehicle search for: {user_input}")
-                
-                # Direct query for Vehicle entity
-                vehicle_query = """
-                MATCH (v:Vehicle)
-                WHERE toLower(v.make) CONTAINS toLower($search) OR 
-                      toLower(v.model) CONTAINS toLower($search) OR
-                      toLower(v.reg) CONTAINS toLower($search)
-                OPTIONAL MATCH (v)-[:INVOLVED_IN]->(c:Crime)
-                RETURN v.make AS make, v.model AS model, v.reg AS registration,
-                       v.year AS year, v.style AS style,
-                       collect(distinct c.type) AS crimes
+                params = {"search": user_input}
+                result = graph.query(cypher, params)
+                if result:
+                    response = "<b>Defect Results:</b><ul>"
+                    for r in result:
+                        response += f"<li>ID: {r['defect_id']}, Category: {r['category']}, Desc: {r['description']}, Severity: {r['severity']}, Times Detected: {r['timesDetected']}, Detection Events: {', '.join(r['detection_events'])}, CRM Cases: {', '.join(r['crm_cases'])}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No defects found matching your query."
+            # Sensor queries
+            if "sensor" in user_lower:
+                cypher = """
+                MATCH (s:Sensor)
+                WHERE toLower(s.sensor_id) CONTAINS toLower($search)
+                   OR toLower(s.category) CONTAINS toLower($search)
+                   OR toLower(s.type) CONTAINS toLower($search)
+                RETURN s.sensor_id AS sensor_id, s.category AS category, s.type AS type, s.status AS status, s.accuracy AS accuracy, s.controlledProperty AS controlledProperty
                 LIMIT 5
                 """
-                
-                try:
-                    vehicle_result = graph.query(vehicle_query, {"search": user_input.lower()})
-                    
-                    if vehicle_result and len(vehicle_result) > 0:
-                        logger.info(f"Found {len(vehicle_result)} vehicle records")
-                        
-                        # Format vehicle results
-                        vehicle_info = "\n\n".join([
-                            f"Vehicle: {item['make']} {item['model']} ({item['year'] if item['year'] else 'Unknown year'})\n" +
-                            f"Registration: {item['registration']}\n" +
-                            f"Style: {item['style'] if item['style'] else 'Unknown'}\n" +
-                            f"Involved in crimes: {', '.join(item['crimes']) if item['crimes'] else 'None on record'}"
-                            for item in vehicle_result
-                        ])
-                        
-                        prompt = f"""
-                        Based on the crime database information about these vehicles:
-                        
-                        {vehicle_info}
-                        
-                        Answer the user's question: "{user_input}"
-                        
-                        Only use the information provided above from the database. Make it clear this information is from the criminal records database.
-                        """
-                        
-                        response = llm.invoke(prompt)
-                        logger.info("RESPONSE FROM: direct vehicle search - Using vehicle information")
-                        return response.content
-                except Exception as e:
-                    logger.error(f"Error in direct vehicle search: {e}")
-
-            # Try location search for address/area queries
-            location_indicators = ["location", "address", "street", "road", "avenue", "place", "area", "district", "where"]
-            if any(indicator in user_input.lower() for indicator in location_indicators):
-                logger.info(f"Attempting direct Location search for: {user_input}")
-                
-                # Direct query for Location entity
-                location_query = """
+                params = {"search": user_input}
+                result = graph.query(cypher, params)
+                if result:
+                    response = "<b>Sensor Results:</b><ul>"
+                    for r in result:
+                        response += f"<li>ID: {r['sensor_id']}, Category: {r['category']}, Type: {r['type']}, Status: {r['status']}, Accuracy: {r['accuracy']}, Controlled Property: {r['controlledProperty']}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No sensors found matching your query."
+            # DetectionEvent queries
+            if "event" in user_lower or "detection" in user_lower:
+                cypher = """
+                MATCH (e:DetectionEvent)
+                WHERE toLower(e.event_id) CONTAINS toLower($search)
+                   OR toLower(e.result) CONTAINS toLower($search)
+                RETURN e.event_id AS event_id, e.observedAt AS observedAt, e.result AS result, e.image_url AS image_url
+                LIMIT 5
+                """
+                params = {"search": user_input}
+                result = graph.query(cypher, params)
+                if result:
+                    response = "<b>Detection Events:</b><ul>"
+                    for r in result:
+                        response += f"<li>ID: {r['event_id']}, Observed At: {r['observedAt']}, Result: {r['result']}, Image: {r['image_url']}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No detection events found matching your query."
+            # CRMCase queries
+            if "crmcase" in user_lower or "case" in user_lower:
+                cypher = """
+                MATCH (c:CRMCase)
+                WHERE toLower(c.case_id) CONTAINS toLower($search)
+                   OR toLower(c.status) CONTAINS toLower($search)
+                RETURN c.case_id AS case_id, c.status AS status, c.createdAt AS createdAt, c.severity AS severity, c.description AS description
+                LIMIT 5
+                """
+                params = {"search": user_input}
+                result = graph.query(cypher, params)
+                if result:
+                    response = "<b>CRM Cases:</b><ul>"
+                    for r in result:
+                        response += f"<li>ID: {r['case_id']}, Status: {r['status']}, Created At: {r['createdAt']}, Severity: {r['severity']}, Desc: {r['description']}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No CRM cases found matching your query."
+            # RoadSegment queries
+            if "roadsegment" in user_lower or "road segment" in user_lower or "road" in user_lower:
+                cypher = """
+                MATCH (r:RoadSegment)
+                WHERE toLower(r.name) CONTAINS toLower($search)
+                   OR toLower(r.refRoad) CONTAINS toLower($search)
+                RETURN r.segment_id AS segment_id, r.name AS name, r.refRoad AS refRoad, r.startKm AS startKm, r.endKm AS endKm, r.roadType AS roadType
+                LIMIT 5
+                """
+                params = {"search": user_input}
+                result = graph.query(cypher, params)
+                if result:
+                    response = "<b>Road Segments:</b><ul>"
+                    for r in result:
+                        response += f"<li>ID: {r['segment_id']}, Name: {r['name']}, Ref Road: {r['refRoad']}, Start Km: {r['startKm']}, End Km: {r['endKm']}, Type: {r['roadType']}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No road segments found matching your query."
+            # Location queries
+            if "location" in user_lower:
+                cypher = """
                 MATCH (l:Location)
-                WHERE toLower(l.address) CONTAINS toLower($search)
-                OPTIONAL MATCH (l)<-[:OCCURRED_AT]-(c:Crime)
-                OPTIONAL MATCH (l)-[:LOCATION_IN_AREA]->(a:Area)
-                RETURN l.address AS address, l.latitude AS lat, l.longitude AS lng,
-                       a.name AS area_name, a.areaCode AS area_code,
-                       count(c) AS crime_count,
-                       collect(distinct c.type) AS crime_types
+                RETURN l.location_lat AS latitude, l.location_lon AS longitude
                 LIMIT 5
                 """
-                
-                try:
-                    location_result = graph.query(location_query, {"search": user_input.lower()})
-                    
-                    if location_result and len(location_result) > 0:
-                        logger.info(f"Found {len(location_result)} location records")
-                        
-                        # Format location results
-                        location_info = "\n\n".join([
-                            f"Address: {item['address']}\n" +
-                            f"Area: {item['area_name'] if item['area_name'] else 'Unknown'}\n" +
-                            f"Area Code: {item['area_code'] if item['area_code'] else 'Unknown'}\n" +
-                            f"Total Crimes: {item['crime_count']}\n" +
-                            f"Crime Types: {', '.join(item['crime_types']) if item['crime_types'] else 'None reported'}"
-                            for item in location_result
-                        ])
-                        
-                        prompt = f"""
-                        Based on the crime database information about these locations:
-                        
-                        {location_info}
-                        
-                        Answer the user's question: "{user_input}"
-                        
-                        Only use the information provided above from the database. Make it clear this information is from the criminal records database.
-                        """
-                        
-                        response = llm.invoke(prompt)
-                        logger.info("RESPONSE FROM: direct location search - Using location information")
-                        return response.content
-                except Exception as e:
-                    logger.error(f"Error in direct location search: {e}")
-
-            # Try direct crime search for crime-related queries
-            crime_indicators = ["crime", "theft", "burglary", "robbery", "assault", "murder", "homicide", "incident", "case"]
-            if any(indicator in user_input.lower() for indicator in crime_indicators):
-                logger.info(f"Attempting direct Crime search for: {user_input}")
-                
-                # Direct query for Crime entity
-                crime_query = """
-                MATCH (c:Crime)
-                WHERE toLower(c.type) CONTAINS toLower($search)
-                   OR toLower(c.description) CONTAINS toLower($search)
-                OPTIONAL MATCH (c)-[:OCCURRED_AT]->(l:Location)
-                OPTIONAL MATCH (c)<-[:INVESTIGATED_BY]-(o:Officer)
-                OPTIONAL MATCH (c)<-[:INVOLVED_IN]-(p:Person)
-                RETURN c.type AS type, c.date AS date, c.description AS description,
-                       c.last_outcome AS outcome, c.charge AS charge,
-                       l.address AS location,
-                       collect(distinct o.badge_no + ' (' + o.rank + ')') AS officers,
-                       collect(distinct p.name + ' ' + p.surname) AS people
-                LIMIT 5
-                """
-                
-                try:
-                    crime_result = graph.query(crime_query, {"search": user_input.lower()})
-                    
-                    if crime_result and len(crime_result) > 0:
-                        logger.info(f"Found {len(crime_result)} crime records")
-                        
-                        # Format crime results
-                        crime_info = "\n\n".join([
-                            f"Crime: {item['type']}\n" +
-                            f"Date: {item['date'] if item['date'] else 'Unknown'}\n" +
-                            f"Description: {item['description'] if item['description'] else 'No description available'}\n" +
-                            f"Outcome: {item['outcome'] if item['outcome'] else 'Unknown'}\n" +
-                            f"Charge: {item['charge'] if item['charge'] else 'None'}\n" +
-                            f"Location: {item['location'] if item['location'] else 'Unknown'}\n" +
-                            f"Investigating Officers: {', '.join(item['officers']) if item['officers'] else 'Unknown'}\n" +
-                            f"People Involved: {', '.join(item['people']) if item['people'] else 'Unknown'}"
-                            for item in crime_result
-                        ])
-                        
-                        prompt = f"""
-                        Based on the crime database information about these crimes:
-                        
-                        {crime_info}
-                        
-                        Answer the user's question: "{user_input}"
-                        
-                        Only use the information provided above from the database. Make it clear this information is from the criminal records database.
-                        """
-                        
-                        response = llm.invoke(prompt)
-                        logger.info("RESPONSE FROM: direct crime search - Using crime information")
-                        return response.content
-                except Exception as e:
-                    logger.error(f"Error in direct crime search: {e}")
-                
-            # If no entity information can be found, provide a response about lack of information
-            logger.info("No information found in the database, providing a 'no information' response")
-            no_info_prompt = f"""
-            The crime database does not contain any relevant information to answer: "{user_input}"
-            
-            Create a brief, professional response explaining that no information was found in the criminal records database. 
-            Suggest the user try a different query, and offer some examples of what they could ask about 
-            (crimes in a location, information about a specific person, vehicle details, etc.).
-            """
-            
-            response = llm.invoke(no_info_prompt)
-            return response.content
+                result = graph.query(cypher)
+                if result:
+                    response = "<b>Locations:</b><ul>"
+                    for r in result:
+                        response += f"<li>Lat: {r['latitude']}, Lon: {r['longitude']}</li>"
+                    response += "</ul>"
+                    return response
+                else:
+                    return "No locations found."
+            # General chat fallback
+            response = general_chat.invoke({"input": user_input})
+            return response
         except Exception as e:
             logger.error(f"Error generating response: {e}")
-            # Final fallback
-            try:
-                logger.info(f"TOOL USED: final llm fallback - All other methods failed for: '{user_input}'")
-                return llm.invoke(f"As a friendly assistant who knows about crime investigation data but can also chat about other topics, respond to this: {user_input}").content
-            except:
-                logger.error(f"COMPLETE FAILURE: Could not generate any response for: '{user_input}'")
-                return "I'm having trouble right now. Please try again later."
+            return "I'm having trouble processing your request. Please try again later."
 except Exception as e:
     logger.error(f"Error setting up crime investigation agent: {e}")
     

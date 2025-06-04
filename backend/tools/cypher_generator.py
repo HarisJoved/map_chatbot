@@ -3,133 +3,31 @@ from graph import graph
 import logging
 import re
 import json
+from .schema import fetch_schema
 
 logger = logging.getLogger(__name__)
 
-def get_schema():
-    """Return the hardcoded POLE schema for Cypher query generation."""
-    return '''
-## 🕵️‍♂️ POLE (Person, Object, Location, Event) Graph Schema – Neo4j Crime Investigation
-
-### Overview
-The POLE schema represents crime investigation data using a graph model. It captures entities like people, objects, locations, and events, along with their complex relationships.
-
----
-
-### Node Types (Labels)
-
-#### 1. Person
-Represents individuals involved in the investigation.
-
-**Attributes:**
-- name
-- surname
-- nhs_no
-- Subtypes: Person, Officer
-
-#### 2. Object
-Represents physical or digital items.
-
-**Types:**
-- Object
-- Email
-- Phone
-
-**Attributes:**
-- type
-- description
-- serial_number
-
-#### 2.1 Vehicle
-Represents mode of transport.
-
-**Types:**
-- Car
-- Vehicle
-- Bike
-- Truck
-
-**Attributes:**
-- reg
-- year
-- model
-- make
-
-#### 3. Location
-Geographical places tied to events or people.
-
-**Attributes:**
-- address
-- postcode
-- latitude
-- longitude
-
-**Related Nodes:**
-- PostCode 
-  attribute: code
-- Area 
-  attribute: areaCode
-
-#### 4. Event
-Incidents or interactions relevant to the investigation.
-
-**Types:**
-- Crime
-- PhoneCall
-
-**Attributes:**
-- type
-- date
-- last_outcome
-
----
-
-### Relationship Types
-
-#### Between Persons
-- KNOWS: General acquaintance
-- FAMILY_REL: Family relationship
-- KNOWS_LW: Lives with
-- KNOWS_PHONE: Phone call connection
-- KNOWS_SN: Social network connection
-
-#### Person to Event
-- PARTY_TO: Person involved in an event
-- INVESTIGATED_BY: Officer investigating an event
-
-#### Event to Location
-- OCCURRED_AT: Event occurred at a location
-
-#### Object Associations
-- INVOLVED_IN: Object linked to an event
-- OWNER_OF: Person owns the object
-- DRIVER_OF: Person drives the vehicle
-
-#### Location Hierarchies
-- HAS_POSTCODE: Location includes a postcode
-- LOCATION_IN_AREA: Location is in a defined area
-
----
-
-### Useful Query Example
-
-Find all crimes at a given address:
-```cypher
-MATCH (l:Location {address: $address})<-[:OCCURRED_AT]-(c:Crime)
-RETURN c.date AS crimeDate
-```
-
-Replace `$address` with the actual address to retrieve relevant crime events.
-
----
-
-### Schema Visualization
-
-To visualize schema structure in Neo4j:
-```cypher
-CALL db.schema.visualization()
-```
+# --- BEGIN NEW SCHEMA HARDCODE ---
+SCHEMA_DESCRIPTION = '''
+Nodes and Properties:
+- Defect: defect_id (String), category (String), description (String), detectedAt (DateTime), severity (String), timesDetected (Integer), location_lat (Float), location_lon (Float)
+- Sensor: sensor_id (String), category (String), type (String), location_lat (Float), location_lon (Float), accuracy (Float), status (String), controlledProperty (String)
+- DetectionEvent: event_id (String), observedAt (DateTime), image_url (String), result (String)
+- CRMCase: case_id (String), status (String), createdAt (DateTime), severity (String), description (String)
+- RoadSegment: segment_id (String), name (String), refRoad (String), location_lat (Float), location_lon (Float), startKm (Float), endKm (Float), roadType (String)
+- Location: location_lat (Float), location_lon (Float)
+Relationships:
+- REPORTED_BY: DetectionEvent -> Defect
+- DETECTED_BY_SENSOR: DetectionEvent -> Sensor
+- ASSOCIATED_WITH: CRMCase -> Defect
+- HAS_LOCATION: Defect -> Location
+Rules:
+- CRMCaseCreation: Create CRMCase only if defect is detected by 4 or more detection events (any sensors).
 '''
+# --- END NEW SCHEMA HARDCODE ---
+
+def get_schema():
+    return SCHEMA_DESCRIPTION
 
 def generate_cypher_query(user_input, context=None):
     """Generate a Cypher query based on user input and database schema"""
@@ -152,7 +50,7 @@ def generate_cypher_query(user_input, context=None):
         
         # Create a prompt for the LLM to generate a Cypher query
         prompt = f"""
-        You are an expert Neo4j Cypher query generator for a crime investigation database. 
+        You are an expert Neo4j Cypher query generator for a road defect and sensor management database. 
         Based on the database schema below, generate the most appropriate Cypher query to answer the user's question.
         
         {schema}
@@ -161,7 +59,7 @@ def generate_cypher_query(user_input, context=None):
         
         STEP 1: ANALYZE THE QUESTION
         First, analyze the user's question to identify:
-        1. Key entities (people, locations, crimes, vehicles, etc.) mentioned
+        1. Key entities (defects, sensors, detection events, CRM cases, road segments, locations) mentioned
         2. Any specific properties or attributes requested
         3. The relationship or action being asked about
         4. Any filters or constraints implied in the question
@@ -307,55 +205,60 @@ def generate_fallback_query(user_input, context=None):
     """Generate a fallback query when query generation fails"""
     input_lower = user_input.lower()
     
-    # Simple person search
-    if "person" in input_lower or "name" in input_lower or "who is" in input_lower:
-        name_match = re.search(r'(?:about|for|on|who is|find)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', user_input)
-        search_term = name_match.group(1) if name_match else ""
-        
+    # Simple defect search
+    if "defect" in input_lower or "issue" in input_lower or "problem" in input_lower or "fault" in input_lower:
         return """
-        MATCH (p:Person)
-        WHERE toLower(p.name + ' ' + p.surname) CONTAINS toLower($search)
-        OPTIONAL MATCH (p)-[:INVOLVED_IN]->(c:Crime)
-        OPTIONAL MATCH (p)-[:HAS_PHONE]->(ph:Phone)
-        RETURN p.name AS name, p.surname AS surname, p.age AS age,
-               collect(distinct c.type) AS crimes,
-               collect(distinct ph.phoneNo) AS phone_numbers
+        MATCH (d:Defect)
+        WHERE toLower(d.description) CONTAINS toLower($search) OR toLower(d.category) CONTAINS toLower($search)
+        OPTIONAL MATCH (e:DetectionEvent)-[:REPORTED_BY]->(d)
+        RETURN d.defect_id AS defect_id, d.category AS category, d.description AS description, d.severity AS severity, d.timesDetected AS timesDetected, collect(DISTINCT e.event_id) AS detection_events
         LIMIT 5
         """
-    
+    # Simple sensor search
+    elif "sensor" in input_lower:
+        return """
+        MATCH (s:Sensor)
+        WHERE toLower(s.sensor_id) CONTAINS toLower($search) OR toLower(s.category) CONTAINS toLower($search) OR toLower(s.type) CONTAINS toLower($search)
+        RETURN s.sensor_id AS sensor_id, s.category AS category, s.type AS type, s.status AS status, s.accuracy AS accuracy, s.controlledProperty AS controlledProperty
+        LIMIT 5
+        """
+    # Simple detection event search
+    elif "event" in input_lower or "detection" in input_lower:
+        return """
+        MATCH (e:DetectionEvent)
+        WHERE toLower(e.event_id) CONTAINS toLower($search) OR toLower(e.result) CONTAINS toLower($search)
+        RETURN e.event_id AS event_id, e.observedAt AS observedAt, e.result AS result, e.image_url AS image_url
+        LIMIT 5
+        """
+    # Simple CRM case search
+    elif "crmcase" in input_lower or "case" in input_lower:
+        return """
+        MATCH (c:CRMCase)
+        WHERE toLower(c.case_id) CONTAINS toLower($search) OR toLower(c.status) CONTAINS toLower($search)
+        RETURN c.case_id AS case_id, c.status AS status, c.createdAt AS createdAt, c.severity AS severity, c.description AS description
+        LIMIT 5
+        """
+    # Simple road segment search
+    elif "roadsegment" in input_lower or "road segment" in input_lower or "road" in input_lower:
+        return """
+        MATCH (r:RoadSegment)
+        WHERE toLower(r.name) CONTAINS toLower($search) OR toLower(r.refRoad) CONTAINS toLower($search)
+        RETURN r.segment_id AS segment_id, r.name AS name, r.refRoad AS refRoad, r.startKm AS startKm, r.endKm AS endKm, r.roadType AS roadType
+        LIMIT 5
+        """
     # Simple location search
-    elif "location" in input_lower or "address" in input_lower or "where" in input_lower:
+    elif "location" in input_lower:
         return """
         MATCH (l:Location)
-        WHERE toLower(l.address) CONTAINS toLower($search)
-        OPTIONAL MATCH (c:Crime)-[:OCCURRED_AT]->(l)
-        RETURN l.address AS address, count(c) AS crime_count, 
-               collect(distinct c.type) AS crime_types
+        RETURN l.location_lat AS latitude, l.location_lon AS longitude
         LIMIT 5
         """
-    
-    # Simple vehicle search
-    elif "vehicle" in input_lower or "car" in input_lower or "registration" in input_lower:
-        return """
-        MATCH (v:Vehicle)
-        WHERE toLower(v.make) CONTAINS toLower($search)
-           OR toLower(v.model) CONTAINS toLower($search)
-           OR toLower(v.reg) CONTAINS toLower($search)
-        OPTIONAL MATCH (v)-[:INVOLVED_IN]->(c:Crime)
-        RETURN v.make AS make, v.model AS model, v.reg AS registration,
-               collect(distinct c.type) AS crimes
-        LIMIT 5
-        """
-    
-    # Default crime search
+    # Default defect search
     else:
         return """
-        MATCH (c:Crime)
-        WHERE toLower(c.type) CONTAINS toLower($search)
-           OR toLower(c.description) CONTAINS toLower($search)
-        OPTIONAL MATCH (c)-[:OCCURRED_AT]->(l:Location)
-        RETURN c.type AS type, c.date AS date, c.description AS description,
-               l.address AS location
+        MATCH (d:Defect)
+        WHERE toLower(d.description) CONTAINS toLower($search)
+        RETURN d.defect_id AS defect_id, d.category AS category, d.description AS description
         LIMIT 5
         """
 
@@ -489,7 +392,7 @@ def execute_dynamic_query(user_input, context=None):
                             entity_type = key.replace('last_', '')
                             context_str += f"- {entity_type.capitalize()}: {value}\n"
                 prompt = f"""
-                You are an expert Neo4j Cypher query generator for a crime investigation database. 
+                You are an expert Neo4j Cypher query generator for a road defect and sensor management database. 
                 Based on the database schema below, generate a Cypher query to answer the user's question.
                 
                 {schema}
@@ -498,7 +401,7 @@ def execute_dynamic_query(user_input, context=None):
                 
                 STEP 1: ANALYZE THE QUESTION
                 First, analyze the user's question to identify:
-                1. Key entities (people, locations, crimes, vehicles, etc.) mentioned
+                1. Key entities (defects, sensors, detection events, CRM cases, road segments, locations) mentioned
                 2. Any specific properties or attributes requested
                 3. The relationship or action being asked about
                 4. Any filters or constraints implied in the question
@@ -696,32 +599,107 @@ def try_entity_specific_queries(user_input, params):
         if not search_term:
             search_term = user_input.lower()
         
-        # Try person search
-        person_query = """
-        MATCH (p:Person)
-        WHERE toLower(p.name + ' ' + COALESCE(p.surname, '')) CONTAINS toLower($search)
-        OPTIONAL MATCH (p)-[:INVOLVED_IN]->(c:Crime)
-        RETURN p.name AS name, p.surname AS surname, COUNT(c) AS crime_count
+        # Try defect search
+        defect_query = """
+        MATCH (d:Defect)
+        WHERE toLower(d.description) CONTAINS toLower($search) OR toLower(d.category) CONTAINS toLower($search)
+        OPTIONAL MATCH (e:DetectionEvent)-[:REPORTED_BY]->(d)
+        RETURN d.defect_id AS defect_id, d.category AS category, d.description AS description, d.severity AS severity, d.timesDetected AS timesDetected, collect(DISTINCT e.event_id) AS detection_events
         LIMIT 5
         """
         
         try:
-            person_result = graph.query(person_query, {"search": search_term})
-            if person_result and len(person_result) > 0:
-                logger.info(f"Person entity query returned {len(person_result)} results")
-                formatted_result = format_query_results(person_result, user_input)
-                prompt = f"Based on these person records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
+            defect_result = graph.query(defect_query, {"search": search_term})
+            if defect_result and len(defect_result) > 0:
+                logger.info(f"Defect entity query returned {len(defect_result)} results")
+                formatted_result = format_query_results(defect_result, user_input)
+                prompt = f"Based on these defect records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
                 response = llm.invoke(prompt)
                 return response.content
         except Exception as e:
-            logger.error(f"Error in person entity query: {e}")
+            logger.error(f"Error in defect entity query: {e}")
+        
+        # Try sensor search
+        sensor_query = """
+        MATCH (s:Sensor)
+        WHERE toLower(s.sensor_id) CONTAINS toLower($search) OR toLower(s.category) CONTAINS toLower($search) OR toLower(s.type) CONTAINS toLower($search)
+        RETURN s.sensor_id AS sensor_id, s.category AS category, s.type AS type, s.status AS status, s.accuracy AS accuracy, s.controlledProperty AS controlledProperty
+        LIMIT 5
+        """
+        
+        try:
+            sensor_result = graph.query(sensor_query, {"search": search_term})
+            if sensor_result and len(sensor_result) > 0:
+                logger.info(f"Sensor entity query returned {len(sensor_result)} results")
+                formatted_result = format_query_results(sensor_result, user_input)
+                prompt = f"Based on these sensor records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
+                response = llm.invoke(prompt)
+                return response.content
+        except Exception as e:
+            logger.error(f"Error in sensor entity query: {e}")
+        
+        # Try detection event search
+        event_query = """
+        MATCH (e:DetectionEvent)
+        WHERE toLower(e.event_id) CONTAINS toLower($search) OR toLower(e.result) CONTAINS toLower($search)
+        RETURN e.event_id AS event_id, e.observedAt AS observedAt, e.result AS result, e.image_url AS image_url
+        LIMIT 5
+        """
+        
+        try:
+            event_result = graph.query(event_query, {"search": search_term})
+            if event_result and len(event_result) > 0:
+                logger.info(f"Detection event entity query returned {len(event_result)} results")
+                formatted_result = format_query_results(event_result, user_input)
+                prompt = f"Based on these detection event records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
+                response = llm.invoke(prompt)
+                return response.content
+        except Exception as e:
+            logger.error(f"Error in detection event entity query: {e}")
+        
+        # Try CRM case search
+        case_query = """
+        MATCH (c:CRMCase)
+        WHERE toLower(c.case_id) CONTAINS toLower($search) OR toLower(c.status) CONTAINS toLower($search)
+        RETURN c.case_id AS case_id, c.status AS status, c.createdAt AS createdAt, c.severity AS severity, c.description AS description
+        LIMIT 5
+        """
+        
+        try:
+            case_result = graph.query(case_query, {"search": search_term})
+            if case_result and len(case_result) > 0:
+                logger.info(f"CRM case entity query returned {len(case_result)} results")
+                formatted_result = format_query_results(case_result, user_input)
+                prompt = f"Based on these CRM case records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
+                response = llm.invoke(prompt)
+                return response.content
+        except Exception as e:
+            logger.error(f"Error in CRM case entity query: {e}")
+        
+        # Try road segment search
+        segment_query = """
+        MATCH (r:RoadSegment)
+        WHERE toLower(r.name) CONTAINS toLower($search) OR toLower(r.refRoad) CONTAINS toLower($search)
+        RETURN r.segment_id AS segment_id, r.name AS name, r.refRoad AS refRoad, r.startKm AS startKm, r.endKm AS endKm, r.roadType AS roadType
+        LIMIT 5
+        """
+        
+        try:
+            segment_result = graph.query(segment_query, {"search": search_term})
+            if segment_result and len(segment_result) > 0:
+                logger.info(f"Road segment entity query returned {len(segment_result)} results")
+                formatted_result = format_query_results(segment_result, user_input)
+                prompt = f"Based on these road segment records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
+                response = llm.invoke(prompt)
+                return response.content
+        except Exception as e:
+            logger.error(f"Error in road segment entity query: {e}")
         
         # Try location search
         location_query = """
         MATCH (l:Location)
-        WHERE toLower(l.address) CONTAINS toLower($search)
-        OPTIONAL MATCH (c:Crime)-[:OCCURRED_AT]->(l)
-        RETURN l.address AS address, COUNT(c) AS crime_count
+        WHERE toLower(l.location_lat) CONTAINS toLower($search) OR toLower(l.location_lon) CONTAINS toLower($search)
+        RETURN l.location_lat AS latitude, l.location_lon AS longitude
         LIMIT 5
         """
         
@@ -735,26 +713,6 @@ def try_entity_specific_queries(user_input, params):
                 return response.content
         except Exception as e:
             logger.error(f"Error in location entity query: {e}")
-        
-        # Try crime search
-        crime_query = """
-        MATCH (c:Crime)
-        WHERE toLower(c.type) CONTAINS toLower($search) OR 
-              toLower(COALESCE(c.description, '')) CONTAINS toLower($search)
-        RETURN c.type AS type, c.date AS date, c.description AS description
-        LIMIT 5
-        """
-        
-        try:
-            crime_result = graph.query(crime_query, {"search": search_term})
-            if crime_result and len(crime_result) > 0:
-                logger.info(f"Crime entity query returned {len(crime_result)} results")
-                formatted_result = format_query_results(crime_result, user_input)
-                prompt = f"Based on these crime records from the database, answer: '{user_input}'\n\n{formatted_result}\n\nMake it clear this information comes from the database."
-                response = llm.invoke(prompt)
-                return response.content
-        except Exception as e:
-            logger.error(f"Error in crime entity query: {e}")
         
         return None
     except Exception as e:

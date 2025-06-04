@@ -56,6 +56,7 @@ const PopupContent = styled.div`
 const PopupAddress = styled.div`
   font-weight: bold;
   color: #222;
+  margin-bottom: 4px;
 `;
 const PopupPostcode = styled.div`
   color: #666;
@@ -168,8 +169,9 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
             closeOnClick={false}
           >
             <PopupContent>
-              <PopupAddress>{popupLocation.address}</PopupAddress>
-              <PopupPostcode>{popupLocation.postcode}</PopupPostcode>
+              <PopupAddress>Defect Location</PopupAddress>
+              <PopupPostcode>Lat: {popupLocation.latitude}, Lon: {popupLocation.longitude}</PopupPostcode>
+              <div style={{ fontSize: '0.9em', color: '#888', marginBottom: 4 }}>This marker represents a defect or location.</div>
               {loadingInfo && <div>Loading info...</div>}
               {errorInfo && <div style={{ color: 'red' }}>{errorInfo}</div>}
               {locationInfo && <div>{parse(locationInfo)}</div>}

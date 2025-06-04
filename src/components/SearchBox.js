@@ -141,7 +141,7 @@ const SearchBox = ({ onSearch }) => {
     <SearchContainer className="search-container">
       <SearchInput
         type="text"
-        placeholder="Search by address or postcode"
+        placeholder="Search by defect description, category, or location"
         value={searchTerm}
         onChange={handleSearch}
         onFocus={() => searchTerm.trim() && setShowResults(true)}
@@ -161,7 +161,7 @@ const SearchBox = ({ onSearch }) => {
             </SearchResultItem>
           ))
         ) : (
-          <NoResults>No locations found</NoResults>
+          <NoResults>No defects or locations found</NoResults>
         )}
       </SearchResults>
     </SearchContainer>

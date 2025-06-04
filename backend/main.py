@@ -5,6 +5,7 @@ import uvicorn
 from pydantic import BaseModel
 import logging
 from agent import generate_response
+from tools.schema import fetch_schema
 
 from models import Location, SearchRequest, SearchResponse
 from database import neo4j_connection
@@ -163,6 +164,10 @@ async def chat(request: ChatRequest):
     except Exception as e:
         logger.error(f"Error processing chat request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
+
+@app.get(f"{API_PREFIX}/schema")
+async def get_schema():
+    return {"schema": fetch_schema()}
 
 # Shutdown event handler
 @app.on_event("shutdown")
