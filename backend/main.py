@@ -97,6 +97,21 @@ async def chat(request: ChatRequest):
 async def get_schema():
     return {"schema": fetch_schema()}
 
+@app.get(f"{API_PREFIX}/defect-by-location")
+async def get_defect_by_location(latitude: float, longitude: float):
+    try:
+        query = """
+        MATCH (d:Defect)-[:HAS_LOCATION]->(l:Location)
+        WHERE l.location_lat = $latitude AND l.location_lon = $longitude
+        RETURN d
+        """
+        result = neo4j_connection.query(query, {"latitude": latitude, "longitude": longitude})
+        if result and len(result) > 0:
+            return {"defect": result[0]["d"]}
+        return {"defect": None}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+
 # Shutdown event handler
 @app.on_event("shutdown")
 def shutdown_event():

@@ -1,10 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import Map, { Marker, Popup } from 'react-map-gl';
 import { DeckGL, GeoJsonLayer } from 'deck.gl';
-import styled from 'styled-components';
+import styled, { createGlobalStyle } from 'styled-components';
 import maplibregl from 'maplibre-gl';
 import RoomIcon from '@mui/icons-material/Room';
-import parse from 'html-react-parser';
+import ErrorIcon from '@mui/icons-material/Error';
+import CategoryIcon from '@mui/icons-material/Category';
+import DescriptionIcon from '@mui/icons-material/Description';
+import TimerIcon from '@mui/icons-material/Timer';
+import RepeatIcon from '@mui/icons-material/Repeat';
+import WarningIcon from '@mui/icons-material/Warning';
+import { keyframes } from 'styled-components';
 
 // Use OpenMapTiles Streets style
 const MAPLIBRE_STYLE = 'https://tiles.stadiamaps.com/styles/alidade_smooth.json';
@@ -50,17 +56,150 @@ const ZoomButton = styled.button`
   }
 `;
 
+const fadeIn = keyframes`
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+`;
+
 const PopupContent = styled.div`
-  min-width: 180px;
+  padding: 15px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  animation: ${fadeIn} 0.3s ease-out;
 `;
-const PopupAddress = styled.div`
+
+const PopupTitle = styled.div`
+  font-size: 1.2em;
   font-weight: bold;
-  color: #222;
-  margin-bottom: 4px;
+  color: #01a3a4;
+  margin-bottom: 16px;
+  border-bottom: 2px solid #01a3a4;
+  padding-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 `;
-const PopupPostcode = styled.div`
-  color: #666;
-  font-size: 0.95em;
+
+const PropertyGroup = styled.div`
+  margin-bottom: 16px;
+  padding: 12px;
+  background: ${props => props.severity === 'high' ? '#fff5f5' : 
+                        props.severity === 'medium' ? '#fff9f0' : 
+                        '#f7fcf7'};
+  border-radius: 6px;
+  border-left: 4px solid ${props => props.severity === 'high' ? '#ff4d4d' : 
+                                   props.severity === 'medium' ? '#ffa726' : 
+                                   '#4caf50'};
+`;
+
+const PropertyRow = styled.div`
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  gap: 8px;
+  
+  &:last-child {
+    margin-bottom: 0;
+  }
+`;
+
+const PropertyLabel = styled.div`
+  font-weight: 600;
+  color: #546e7a;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 120px;
+  
+  svg {
+    font-size: 1.2em;
+    color: #01a3a4;
+  }
+`;
+
+const PropertyValue = styled.div`
+  color: #37474f;
+  flex: 1;
+  line-height: 1.4;
+`;
+
+const LoadingSpinner = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: #01a3a4;
+  
+  &:after {
+    content: '';
+    width: 20px;
+    height: 20px;
+    border: 2px solid #01a3a4;
+    border-top: 2px solid transparent;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+`;
+
+const ErrorMessage = styled.div`
+  color: #d32f2f;
+  padding: 12px;
+  background: #ffebee;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  
+  svg {
+    font-size: 1.2em;
+  }
+`;
+
+const GlobalStyle = createGlobalStyle`
+  .defect-popup {
+    .maplibregl-popup-content {
+      padding: 0;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    
+    .maplibregl-popup-close-button {
+      padding: 0;
+      width: 24px;
+      height: 24px;
+      color: white;
+      font-size: 24px;
+      background: rgba(0,0,0,0.2);
+      border-radius: 50%;
+      right: 8px;
+      top: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+      
+      &:hover {
+        background: rgba(0,0,0,0.4);
+      }
+    }
+    
+    .maplibregl-popup-tip {
+      border-top-color: white;
+    }
+  }
 `;
 
 const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations = [] }) => {
@@ -139,16 +278,17 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
     setLoadingInfo(true);
     setErrorInfo(null);
     setLocationInfo(null);
+    
     try {
-      const res = await fetch('http://localhost:8000/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: loc.address })
-      });
+      const res = await fetch(`http://localhost:8000/api/defect-by-location?latitude=${loc.latitude}&longitude=${loc.longitude}`);
       const data = await res.json();
-      setLocationInfo(data.response);
-    } catch {
-      setErrorInfo('Failed to fetch location info.');
+      if (data.defect) {
+        setLocationInfo(data.defect);
+      } else {
+        setErrorInfo('No defect found at this location.');
+      }
+    } catch (error) {
+      setErrorInfo('Failed to fetch defect information.');
     } finally {
       setLoadingInfo(false);
     }
@@ -156,6 +296,7 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
 
   return (
     <MapContainer>
+      <GlobalStyle />
       <StyledDeck
         layers={allLayers}
         viewState={viewState}
@@ -167,7 +308,6 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
           mapStyle={MAPLIBRE_STYLE}
         />
       </StyledDeck>
-      {/* Single overlay Map for all markers */}
       <Map
         mapLib={maplibregl}
         mapStyle={MAPLIBRE_STYLE}
@@ -181,19 +321,9 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
             longitude={loc.longitude}
             latitude={loc.latitude}
             anchor="bottom"
+            onClick={() => handleMarkerClick(loc)}
           >
-            <button
-              onClick={() => handleMarkerClick(loc)}
-              style={{
-                background: 'none', border: 'none', padding: 0,
-                margin: 0, cursor: 'pointer', outline: 'none',
-                pointerEvents: 'auto'
-              }}
-              title="Show location info"
-              aria-label="Show location info"
-            >
-              <RoomIcon style={{ fontSize: 36, color: '#d32f2f', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))' }} />
-            </button>
+            <RoomIcon style={{ fontSize: 36, color: '#d32f2f', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))', cursor: 'pointer', pointerEvents: 'auto' }} />
           </Marker>
         ))}
         {showPopup && popupLocation && (
@@ -203,14 +333,89 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
             anchor="top"
             onClose={() => setShowPopup(false)}
             closeOnClick={false}
+            className="defect-popup"
           >
             <PopupContent>
-              <PopupAddress>Defect Location</PopupAddress>
-              <PopupPostcode>Lat: {popupLocation.latitude}, Lon: {popupLocation.longitude}</PopupPostcode>
-              <div style={{ fontSize: '0.9em', color: '#888', marginBottom: 4 }}>This marker represents a defect or location.</div>
-              {loadingInfo && <div>Loading info...</div>}
-              {errorInfo && <div style={{ color: 'red' }}>{errorInfo}</div>}
-              {locationInfo && <div>{parse(locationInfo)}</div>}
+              <PopupTitle>
+                <WarningIcon />
+                Defect Information
+              </PopupTitle>
+              
+              {loadingInfo && <LoadingSpinner />}
+              
+              {errorInfo && (
+                <ErrorMessage>
+                  <ErrorIcon />
+                  {errorInfo}
+                </ErrorMessage>
+              )}
+              
+              {locationInfo && (
+                <>
+                  <PropertyGroup severity={locationInfo.severity?.toLowerCase()}>
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <CategoryIcon />
+                        ID
+                      </PropertyLabel>
+                      <PropertyValue>{locationInfo.defect_id}</PropertyValue>
+                    </PropertyRow>
+                    
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <CategoryIcon />
+                        Category
+                      </PropertyLabel>
+                      <PropertyValue>{locationInfo.category}</PropertyValue>
+                    </PropertyRow>
+                    
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <WarningIcon />
+                        Severity
+                      </PropertyLabel>
+                      <PropertyValue style={{
+                        color: locationInfo.severity?.toLowerCase() === 'high' ? '#d32f2f' :
+                               locationInfo.severity?.toLowerCase() === 'medium' ? '#f57c00' :
+                               '#388e3c',
+                        fontWeight: 'bold'
+                      }}>
+                        {locationInfo.severity}
+                      </PropertyValue>
+                    </PropertyRow>
+                  </PropertyGroup>
+
+                  <PropertyGroup>
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <DescriptionIcon />
+                        Description
+                      </PropertyLabel>
+                      <PropertyValue>{locationInfo.description}</PropertyValue>
+                    </PropertyRow>
+                  </PropertyGroup>
+
+                  <PropertyGroup>
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <RepeatIcon />
+                        Times Detected
+                      </PropertyLabel>
+                      <PropertyValue>{locationInfo.timesDetected}</PropertyValue>
+                    </PropertyRow>
+                    
+                    <PropertyRow>
+                      <PropertyLabel>
+                        <TimerIcon />
+                        Detected At
+                      </PropertyLabel>
+                      <PropertyValue>
+                        {new Date(locationInfo.detectedAt).toLocaleString()}
+                      </PropertyValue>
+                    </PropertyRow>
+                  </PropertyGroup>
+                </>
+              )}
             </PopupContent>
           </Popup>
         )}
