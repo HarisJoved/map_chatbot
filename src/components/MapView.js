@@ -70,6 +70,42 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [errorInfo, setErrorInfo] = useState(null);
 
+  // Add new useEffect for auto-zooming to show all markers
+  useEffect(() => {
+    if (displayedLocations.length > 0) {
+      // Calculate bounds
+      const lats = displayedLocations.map(loc => loc.latitude);
+      const lons = displayedLocations.map(loc => loc.longitude);
+      
+      const minLat = Math.min(...lats);
+      const maxLat = Math.max(...lats);
+      const minLon = Math.min(...lons);
+      const maxLon = Math.max(...lons);
+      
+      // Add padding to bounds
+      const latPadding = (maxLat - minLat) * 0.2;
+      const lonPadding = (maxLon - minLon) * 0.2;
+      
+      // Calculate center
+      const centerLat = (minLat + maxLat) / 2;
+      const centerLon = (minLon + maxLon) / 2;
+      
+      // Calculate zoom level
+      const latZoom = Math.log2(360 / (maxLat - minLat + 2 * latPadding)) + 1;
+      const lonZoom = Math.log2(360 / (maxLon - minLon + 2 * lonPadding)) + 1;
+      const zoom = Math.min(latZoom, lonZoom, 20);
+      
+      setViewState({
+        latitude: centerLat,
+        longitude: centerLon,
+        zoom: zoom - 1, // Subtract 1 to zoom out slightly more
+        bearing: 0,
+        pitch: 0,
+        padding: { top: 50, bottom: 50, left: 50, right: 50 }
+      });
+    }
+  }, [displayedLocations, setViewState]);
+
   useEffect(() => {
     setShowPopup(false);
     setLocationInfo(null);

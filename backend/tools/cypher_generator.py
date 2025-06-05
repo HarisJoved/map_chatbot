@@ -30,15 +30,22 @@ def get_schema():
     return SCHEMA_DESCRIPTION
 
 def generate_cypher_query(user_input, context=None):
-    """Generate a Cypher query based on user input and database schema"""
+    """Generate Cypher queries based on user input and context."""
     try:
-        logger.info(f"Generating Cypher query for: '{user_input}'")
+        logger.info(f"Generating Cypher query for: {user_input}")
         
-        # Get the database schema
+        # Handle specific patterns first
+        if "severity high" in user_input.lower() or "high severity" in user_input.lower():
+            query = """
+            MATCH (d:Defect)
+            WHERE d.severity = 'high'
+            RETURN d
+            LIMIT 10
+            """
+            return [query]  # Return as list since execute_dynamic_query expects multiple queries
+            
+        # For other queries, use the LLM
         schema = get_schema()
-        logger.info(f"Retrieved schema for query generation")
-        
-        # Format context for LLM
         context_str = ""
         if context:
             context_items = {k: v for k, v in context.items() if v and k.startswith('last_')}
@@ -48,10 +55,9 @@ def generate_cypher_query(user_input, context=None):
                     entity_type = key.replace('last_', '')
                     context_str += f"- {entity_type.capitalize()}: {value}\n"
         
-        # Create a prompt for the LLM to generate a Cypher query
         prompt = f"""
         You are an expert Neo4j Cypher query generator for a road defect and sensor management database. 
-        Based on the database schema below, generate the most appropriate Cypher query to answer the user's question.
+        Based on the database schema below, generate a Cypher query to answer the user's question.
         
         {schema}
         
@@ -81,47 +87,22 @@ def generate_cypher_query(user_input, context=None):
         Return ONLY the Cypher query with no explanations or additional text. The query should be ready to execute.
         """
         
-        # Generate the Cypher query using LLM
         response = llm.invoke(prompt)
         cypher_query = response.content.strip()
         
-        # Clean up the query (remove markdown code blocks if present)
+        # Clean up the query if it's wrapped in code blocks
         if "```" in cypher_query:
-            # Extract the query from code blocks
             matches = re.findall(r"```(?:cypher)?(.*?)```", cypher_query, re.DOTALL)
             if matches:
                 cypher_query = matches[0].strip()
             else:
-                # Fallback if regex doesn't match
                 cypher_query = cypher_query.replace("```cypher", "").replace("```", "").strip()
         
-        # Log the generated query with clear formatting for terminal visibility
-        logger.info("════════════════════ GENERATED CYPHER QUERY ════════════════════")
-        for line in cypher_query.split('\n'):
-            logger.info(line)
-        logger.info("══════════════════════════════════════════════════════════════")
+        return [cypher_query] if cypher_query else []
         
-        # Validate the query before returning
-        validate_result = validate_cypher_query(cypher_query)
-        if validate_result:
-            logger.info("Query validation passed")
-            return cypher_query
-        else:
-            logger.warning("Query validation failed, attempting to fix query")
-            fixed_query = fix_cypher_query(cypher_query, user_input, schema)
-            if fixed_query:
-                logger.info("════════════════════ FIXED CYPHER QUERY ════════════════════")
-                for line in fixed_query.split('\n'):
-                    logger.info(line)
-                logger.info("══════════════════════════════════════════════════════════")
-                return fixed_query
-            else:
-                logger.error("Failed to fix query, returning original query")
-                return cypher_query
     except Exception as e:
         logger.error(f"Error generating Cypher query: {e}")
-        # Return a simple fallback query based on the user input
-        return generate_fallback_query(user_input, context)
+        return []
 
 def validate_cypher_query(query):
     """Basic validation of a Cypher query"""
@@ -366,189 +347,152 @@ def fallback_parameter_extraction(query, user_input, context, param_matches):
     
     return params
 
-def execute_dynamic_query(user_input, context=None):
-    """Generate and execute a dynamic Cypher query based on user input and context, retrying up to 3 different queries if needed."""
-    try:
-        logger.info(f"═══════════════ DYNAMIC QUERY EXECUTION ═══════════════")
-        logger.info(f"User input: '{user_input}'")
-        if context:
-            context_str = ", ".join([f"{k}: {v}" for k, v in context.items() if v and k.startswith('last_')])
-            logger.info(f"Context available - {context_str}")
+def flatten_result(item):
+    """Flatten Neo4j result if it's wrapped in a single key (e.g., 'd', 's', etc.)"""
+    if isinstance(item, dict) and len(item) == 1 and isinstance(list(item.values())[0], dict):
+        return list(item.values())[0]
+    return item
 
-        previous_queries = set()
+def execute_dynamic_query(user_input, context=None):
+    """Generate and execute a dynamic Cypher query based on user input and context."""
+    try:
+        logger.info("═══════════════ DYNAMIC QUERY EXECUTION ═══════════════")
+        logger.info(f"User input: '{user_input}'")
+
+        # Generate and try multiple queries
+        queries = generate_cypher_query(user_input, context)
         last_query = None
-        for attempt in range(3):
-            if attempt == 0:
-                cypher_query = generate_cypher_query(user_input, context)
-            else:
-                # Prompt LLM to generate a different query than previous attempts
-                schema = get_schema()
-                context_str = ""
-                if context:
-                    context_items = {k: v for k, v in context.items() if v and k.startswith('last_')}
-                    if context_items:
-                        context_str = "The user previously mentioned the following entities in the conversation:\n"
-                        for key, value in context_items.items():
-                            entity_type = key.replace('last_', '')
-                            context_str += f"- {entity_type.capitalize()}: {value}\n"
-                prompt = f"""
-                You are an expert Neo4j Cypher query generator for a road defect and sensor management database. 
-                Based on the database schema below, generate a Cypher query to answer the user's question.
-                
-                {schema}
-                
-                USER QUESTION: {user_input}
-                
-                STEP 1: ANALYZE THE QUESTION
-                First, analyze the user's question to identify:
-                1. Key entities (defects, sensors, detection events, CRM cases, road segments, locations) mentioned
-                2. Any specific properties or attributes requested
-                3. The relationship or action being asked about
-                4. Any filters or constraints implied in the question
-                
-                STEP 2: CONSIDER CONTEXT
-                {context_str}
-                When the user refers to "this" or "that" with a noun, they're likely referring to these previously mentioned entities.
-                
-                STEP 3: GENERATE CYPHER QUERY
-                Based on your analysis, generate a Cypher query that:
-                1. Uses exactly the node labels, relationships and properties from the schema
-                2. Includes appropriate filters based on your analysis
-                3. Uses case-insensitive comparisons with toLower() for text searches
-                4. Returns only the most relevant information
-                5. Uses parameterized queries with $parameters
-                6. Limits results to at most 10 items
-                7. Contains properly structured relationships between nodes
-                8. Is different in structure or approach from the following previous attempts (do NOT repeat them):
-                {chr(10).join(previous_queries)}
-                
-                Return ONLY the Cypher query with no explanations or additional text. The query should be ready to execute.
-                """
-                response = llm.invoke(prompt)
-                cypher_query = response.content.strip()
-                if "```" in cypher_query:
-                    matches = re.findall(r"```(?:cypher)?(.*?)```", cypher_query, re.DOTALL)
-                    if matches:
-                        cypher_query = matches[0].strip()
-                    else:
-                        cypher_query = cypher_query.replace("```cypher", "").replace("```", "").strip()
-            if not cypher_query:
-                logger.error("Query generation failed")
-                continue
-            if cypher_query in previous_queries:
-                logger.warning("LLM repeated a previous query, skipping this attempt.")
-                continue
-            previous_queries.add(cypher_query)
-            last_query = cypher_query
-            params = extract_parameters(cypher_query, user_input, context)
+        
+        for query in queries:
             try:
-                logger.info(f"Executing generated query (attempt {attempt+1})...")
-                result = graph.query(cypher_query, params)
+                logger.info(f"Trying query: {query}")
+                # Extract and validate parameters
+                params = extract_parameters(query, user_input, context)
+                logger.info(f"Extracted parameters: {params}")
+                
+                # Execute query
+                result = graph.query(query, params)
                 result_count = len(result) if result else 0
-                logger.info(f"Dynamic query returned {result_count} results")
-                if result and result_count > 0:
-                    logger.info("════════════════════ SAMPLE RESULTS ════════════════════")
-                    for i, item in enumerate(result[:3]):
-                        logger.info(f"Result {i+1}: {item}")
-                    if result_count > 3:
-                        logger.info(f"... and {result_count-3} more results")
-                    logger.info("══════════════════════════════════════════════════════")
-                    formatted_context = format_query_results(result, user_input)
-                    prompt = f"""
-                    Based on the following database query results, answer the user's question: "{user_input}"
+                logger.info(f"Query returned {result_count} results")
+                logger.info(f"Raw results: {result}")
+                
+                if result and len(result) > 0:
+                    logger.info("Results found, processing...")
+                    # --- FLATTEN RESULTS ---
+                    flat_results = [flatten_result(item) for item in result]
+                    logger.info(f"Flattened results: {flat_results}")
                     
-                    {formatted_context}
+                    # --- FORMAT RESULTS FOR LLM ---
+                    formatted_context = format_query_results(flat_results, user_input)
+                    logger.info(f"Formatted context (HTML): {formatted_context}")
                     
-                    Respond in a friendly, conversational way. Use HTML formatting (such as <b>, <i>, <ul>, <table>, etc.) to clearly present the information. Clearly state that this information comes from the database. If the results don't fully answer the question, say so, but provide what information you can from these results. Your response should be factual, professional, and concise, focusing only on the information provided in the database results.
-                    """
-                    response = llm.invoke(prompt)
-                    logger.info("Successfully formatted dynamic query results")
-                    logger.info("═════════════════════════════════════════════════════════")
-                    return {"result": response.content}
-            except Exception as query_error:
-                logger.error(f"Error executing dynamic query: {query_error}")
-                error_message = str(query_error)
-                error_type = "unknown"
-                if "SyntaxError" in error_message:
-                    error_type = "syntax"
-                elif "SemanticError" in error_message:
-                    error_type = "semantic"
-                elif "ConstraintValidationFailed" in error_message:
-                    error_type = "constraint"
-                elif "PropertyNotFound" in error_message or "NoSuchProperty" in error_message:
-                    error_type = "property"
-                elif "NotFound" in error_message:
-                    error_type = "notfound"
-                logger.warning(f"Query error type: {error_type}")
-                logger.info("Attempting to fix query based on error message")
-                fixed_query = repair_query_from_error(cypher_query, error_message, error_type)
-                if fixed_query and fixed_query not in previous_queries:
-                    previous_queries.add(fixed_query)
-                    try:
-                        repair_result = graph.query(fixed_query, params)
-                        repair_count = len(repair_result) if repair_result else 0
-                        logger.info(f"Repaired query returned {repair_count} results")
-                        if repair_result and repair_count > 0:
-                            formatted_context = format_query_results(repair_result, user_input)
-                            prompt = f"""
-                            Based on the following database query results, answer the user's question: "{user_input}"
-                            
-                            {formatted_context}
-                            
-                            Respond in a friendly, conversational way. Use HTML formatting (such as <b>, <i>, <ul>, <table>, etc.) to clearly present the information. Clearly state that this information comes from the database. If the results don't fully answer the question, say so, but provide what information you can from these results. Your response should be factual, professional, and concise, focusing only on the information provided in the database results.
-                            """
-                            response = llm.invoke(prompt)
-                            logger.info("Successfully formatted repaired query results")
-                            return {"result": response.content}
-                    except Exception as repair_error:
-                        logger.error(f"Error executing repaired query: {repair_error}")
-        # If all attempts failed, try entity-specific queries as fallback
-        logger.info("All dynamic query attempts failed, trying entity-specific queries as fallback")
-        if last_query:
-            params = extract_parameters(last_query, user_input, context)
-        entity_result = try_entity_specific_queries(user_input, params)
-        if entity_result:
-            return {"result": entity_result}
-        return {"result": None}
+                    # --- COLLECT LOCATIONS FOR MAP MARKERS ---
+                    locations = []
+                    for item in flat_results:
+                        loc_id = item.get('location_id')
+                        logger.info(f"Processing location_id: {loc_id}")
+                        if loc_id:
+                            loc_query = "MATCH (l:Location {location_id: $loc_id}) RETURN l.location_lat AS latitude, l.location_lon AS longitude, l.location_id AS location_id"
+                            loc_result = graph.query(loc_query, {"loc_id": loc_id})
+                            logger.info(f"Location query result: {loc_result}")
+                            for loc in loc_result:
+                                if loc["latitude"] is not None and loc["longitude"] is not None:
+                                    locations.append({
+                                        "latitude": loc["latitude"],
+                                        "longitude": loc["longitude"],
+                                        "location_id": loc["location_id"],
+                                        "address": "N/A",  # Adding required address field
+                                        "postcode": "N/A"  # Adding required postcode field
+                                    })
+                    logger.info(f"Collected locations: {locations}")
+                    
+                    # --- RETURN FORMATTED RESPONSE AND LOCATIONS ---
+                    logger.info("Returning formatted response with locations")
+                    return {
+                        "response": formatted_context,
+                        "location": None,
+                        "locations": locations
+                    }
+                
+                last_query = query
+            except Exception as e:
+                logger.error(f"Error executing query: {e}")
+                continue
+        
+        # If we get here, no successful results were found
+        logger.info("No results found through any method")
+        return {
+            "response": "No defects found matching your query.",
+            "location": None,
+            "locations": []
+        }
     except Exception as e:
         logger.error(f"Error in execute_dynamic_query: {e}")
-        return {"result": None}
+        return {
+            "response": "An error occurred while processing your query.",
+            "location": None,
+            "locations": []
+        }
 
 def format_query_results(results, user_input):
-    """Format query results as an HTML table for the LLM"""
+    """Format query results in a friendly, conversational manner"""
     try:
         if not results or len(results) == 0:
-            return "<i>No results found in the database.</i>"
-        # Get all possible keys from all results
-        all_keys = set()
-        for item in results:
-            all_keys.update(item.keys())
-        all_keys = list(all_keys)
-        # Create HTML table header
-        table = '<table border="1" cellpadding="4" cellspacing="0" style="border-collapse:collapse;">'
-        table += '<thead><tr>' + ''.join(f'<th>{key}</th>' for key in all_keys) + '</tr></thead><tbody>'
-        # Add each result as a row
-        for item in results:
-            row = '<tr>'
-            for key in all_keys:
-                value = item.get(key, "")
-                if isinstance(value, list):
-                    value = ', '.join(str(v) for v in value) if value else 'none'
-                elif value is None:
-                    value = 'null'
-                row += f'<td>{value}</td>'
-            row += '</tr>'
-            table += row
-        table += '</tbody></table>'
-        return table
+            return "I looked in the database but couldn't find any matching results. Could you try rephrasing your question or providing more details?"
+        
+        # Start with a friendly intro based on result count
+        formatted_text = f"I found {len(results)} {'result' if len(results) == 1 else 'results'} that might help you:<br/><br/>"
+        
+        for i, item in enumerate(results, 1):
+            # Add a divider between results if there are multiple
+            if i > 1:
+                formatted_text += "<br/>"
+            
+            # Group the data fields logically
+            core_fields = ['defect_id', 'category', 'type', 'description', 'severity']
+            location_fields = ['location_lat', 'location_lon', 'address', 'postcode']
+            time_fields = ['detectedAt', 'createdAt', 'observedAt']
+            status_fields = ['status', 'timesDetected', 'accuracy']
+            
+            # Start with core information
+            core_info = [f"{key}: {item[key]}" for key in core_fields if key in item and item[key] is not None]
+            if core_info:
+                formatted_text += f"<b>{i}.</b> Here's what I found: {', '.join(core_info)}<br/>"
+            
+            # Add location information if available
+            loc_info = [f"{key.replace('location_', '')}: {item[key]}" for key in location_fields if key in item and item[key] is not None]
+            if loc_info:
+                formatted_text += f"📍 Location details: {', '.join(loc_info)}<br/>"
+            
+            # Add timing information if available
+            time_info = [f"{key}: {item[key]}" for key in time_fields if key in item and item[key] is not None]
+            if time_info:
+                formatted_text += f"⏰ Timing information: {', '.join(time_info)}<br/>"
+            
+            # Add status and other details if available
+            status_info = [f"{key}: {item[key]}" for key in status_fields if key in item and item[key] is not None]
+            if status_info:
+                formatted_text += f"ℹ️ Additional details: {', '.join(status_info)}<br/>"
+            
+            # Handle any remaining fields that weren't covered above
+            other_fields = [key for key in item.keys() if key not in core_fields + location_fields + time_fields + status_fields]
+            other_info = []
+            for key in other_fields:
+                value = item[key]
+                if value is not None:
+                    if isinstance(value, list):
+                        value = ', '.join(str(v) for v in value) if value else 'none'
+                    other_info.append(f"{key}: {value}")
+            if other_info:
+                formatted_text += f"📌 Other information: {', '.join(other_info)}<br/>"
+        
+        # Add a helpful closing note
+        formatted_text += "<br/>Is there anything specific about these results you'd like me to explain further?"
+        
+        return formatted_text
     except Exception as e:
         logger.error(f"Error formatting query results: {e}")
-        # Fallback to simple HTML formatting
-        simple_text = "<ul>"
-        for i, item in enumerate(results):
-            simple_text += f"<li>Result {i+1}: {item}</li>"
-        simple_text += "</ul>"
-        return simple_text
+        return "I found some results but had trouble formatting them nicely. Would you like me to try presenting them in a simpler way?"
 
 def repair_query_from_error(query, error_message, error_type):
     """Attempt to repair a query based on the error message"""

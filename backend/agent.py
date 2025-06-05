@@ -127,137 +127,31 @@ try:
     def generate_response(user_input, recent_messages=None, context=None):
         try:
             logger.info(f"Received user input: {user_input}")
-            user_lower = user_input.lower()
             # 1. General conversation check
             if is_general_conversation(user_input):
                 general_result = handle_general_chat(user_input)
                 if general_result and "output" in general_result and general_result["output"]:
-                    return general_result["output"]
-            # 2. Try LLM/dynamic Cypher generator for all database questions
+                    return {"response": general_result["output"]}
+                
+            # 2. Try LLM/dynamic Cypher generator for all database queries
             dynamic_result = execute_dynamic_query(user_input, context)
-            if dynamic_result and "result" in dynamic_result and dynamic_result["result"]:
-                return dynamic_result["result"]
-            # 3. Fallback: use hardcoded Cypher queries for simple entity types
-            # Defect queries
-            if any(word in user_lower for word in ["defect", "issue", "problem", "fault"]):
-                cypher = """
-                MATCH (d:Defect)
-                WHERE toLower(d.description) CONTAINS toLower($search)
-                   OR toLower(d.category) CONTAINS toLower($search)
-                OPTIONAL MATCH (e:DetectionEvent)-[:REPORTED_BY]->(d)
-                OPTIONAL MATCH (c:CRMCase)-[:ASSOCIATED_WITH]->(d)
-                RETURN d.defect_id AS defect_id, d.category AS category, d.description AS description, d.severity AS severity, d.timesDetected AS timesDetected, collect(DISTINCT e.event_id) AS detection_events, collect(DISTINCT c.case_id) AS crm_cases
-                LIMIT 5
-                """
-                params = {"search": user_input}
-                result = graph.query(cypher, params)
-                if result:
-                    response = "<b>Defect Results:</b><ul>"
-                    for r in result:
-                        response += f"<li>ID: {r['defect_id']}, Category: {r['category']}, Desc: {r['description']}, Severity: {r['severity']}, Times Detected: {r['timesDetected']}, Detection Events: {', '.join(r['detection_events'])}, CRM Cases: {', '.join(r['crm_cases'])}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No defects found matching your query."
-            # Sensor queries
-            if "sensor" in user_lower:
-                cypher = """
-                MATCH (s:Sensor)
-                WHERE toLower(s.sensor_id) CONTAINS toLower($search)
-                   OR toLower(s.category) CONTAINS toLower($search)
-                   OR toLower(s.type) CONTAINS toLower($search)
-                RETURN s.sensor_id AS sensor_id, s.category AS category, s.type AS type, s.status AS status, s.accuracy AS accuracy, s.controlledProperty AS controlledProperty
-                LIMIT 5
-                """
-                params = {"search": user_input}
-                result = graph.query(cypher, params)
-                if result:
-                    response = "<b>Sensor Results:</b><ul>"
-                    for r in result:
-                        response += f"<li>ID: {r['sensor_id']}, Category: {r['category']}, Type: {r['type']}, Status: {r['status']}, Accuracy: {r['accuracy']}, Controlled Property: {r['controlledProperty']}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No sensors found matching your query."
-            # DetectionEvent queries
-            if "event" in user_lower or "detection" in user_lower:
-                cypher = """
-                MATCH (e:DetectionEvent)
-                WHERE toLower(e.event_id) CONTAINS toLower($search)
-                   OR toLower(e.result) CONTAINS toLower($search)
-                RETURN e.event_id AS event_id, e.observedAt AS observedAt, e.result AS result, e.image_url AS image_url
-                LIMIT 5
-                """
-                params = {"search": user_input}
-                result = graph.query(cypher, params)
-                if result:
-                    response = "<b>Detection Events:</b><ul>"
-                    for r in result:
-                        response += f"<li>ID: {r['event_id']}, Observed At: {r['observedAt']}, Result: {r['result']}, Image: {r['image_url']}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No detection events found matching your query."
-            # CRMCase queries
-            if "crmcase" in user_lower or "case" in user_lower:
-                cypher = """
-                MATCH (c:CRMCase)
-                WHERE toLower(c.case_id) CONTAINS toLower($search)
-                   OR toLower(c.status) CONTAINS toLower($search)
-                RETURN c.case_id AS case_id, c.status AS status, c.createdAt AS createdAt, c.severity AS severity, c.description AS description
-                LIMIT 5
-                """
-                params = {"search": user_input}
-                result = graph.query(cypher, params)
-                if result:
-                    response = "<b>CRM Cases:</b><ul>"
-                    for r in result:
-                        response += f"<li>ID: {r['case_id']}, Status: {r['status']}, Created At: {r['createdAt']}, Severity: {r['severity']}, Desc: {r['description']}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No CRM cases found matching your query."
-            # RoadSegment queries
-            if "roadsegment" in user_lower or "road segment" in user_lower or "road" in user_lower:
-                cypher = """
-                MATCH (r:RoadSegment)
-                WHERE toLower(r.name) CONTAINS toLower($search)
-                   OR toLower(r.refRoad) CONTAINS toLower($search)
-                RETURN r.segment_id AS segment_id, r.name AS name, r.refRoad AS refRoad, r.startKm AS startKm, r.endKm AS endKm, r.roadType AS roadType
-                LIMIT 5
-                """
-                params = {"search": user_input}
-                result = graph.query(cypher, params)
-                if result:
-                    response = "<b>Road Segments:</b><ul>"
-                    for r in result:
-                        response += f"<li>ID: {r['segment_id']}, Name: {r['name']}, Ref Road: {r['refRoad']}, Start Km: {r['startKm']}, End Km: {r['endKm']}, Type: {r['roadType']}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No road segments found matching your query."
-            # Location queries
-            if "location" in user_lower:
-                cypher = """
-                MATCH (l:Location)
-                RETURN l.location_lat AS latitude, l.location_lon AS longitude
-                LIMIT 5
-                """
-                result = graph.query(cypher)
-                if result:
-                    response = "<b>Locations:</b><ul>"
-                    for r in result:
-                        response += f"<li>Lat: {r['latitude']}, Lon: {r['longitude']}</li>"
-                    response += "</ul>"
-                    return response
-                else:
-                    return "No locations found."
-            # General chat fallback
-            response = general_chat.invoke({"input": user_input})
-            return response
+            if dynamic_result:
+                # Return the result directly from execute_dynamic_query
+                return dynamic_result
+            
+            # 3. If we get here, no results were found
+            return {
+                "response": "No results found matching your query.",
+                "location": None,
+                "locations": []
+            }
         except Exception as e:
-            logger.error(f"Error generating response: {e}")
-            return "I'm having trouble processing your request. Please try again later."
+            logger.error(f"Error in generate_response: {e}")
+            return {
+                "response": f"An error occurred while processing your query: {str(e)}",
+                "location": None,
+                "locations": []
+            }
 except Exception as e:
     logger.error(f"Error setting up crime investigation agent: {e}")
     

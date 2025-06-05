@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styled from 'styled-components';
 import { FaBars } from 'react-icons/fa';
 import parse from 'html-react-parser';
@@ -177,7 +177,7 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
   };
 
   // If user asks to show these locations, trigger onShowLocations
-  React.useEffect(() => {
+  useEffect(() => {
     if (messages.length > 0) {
       const lastMsg = messages[messages.length-1];
       if (lastMsg.isUser && /show (me )?these locations/i.test(lastMsg.text) && lastLocations.length > 0) {
