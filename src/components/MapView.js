@@ -90,13 +90,41 @@ const PopupTitle = styled.div`
 const PropertyGroup = styled.div`
   margin-bottom: 16px;
   padding: 12px;
-  background: ${props => props.severity === 'high' ? '#fff5f5' : 
-                        props.severity === 'medium' ? '#fff9f0' : 
-                        '#f7fcf7'};
+  background: ${props => {
+    if (props.type === 'crm') {
+      switch (props.status?.toLowerCase()) {
+        case 'open':
+          return '#fff5f5';
+        case 'in progress':
+          return '#fff9f0';
+        case 'closed':
+          return '#f7fcf7';
+        default:
+          return '#f8f9fa';
+      }
+    }
+    return props.severity === 'high' ? '#fff5f5' : 
+           props.severity === 'medium' ? '#fff9f0' : 
+           '#f7fcf7';
+  }};
   border-radius: 6px;
-  border-left: 4px solid ${props => props.severity === 'high' ? '#ff4d4d' : 
-                                   props.severity === 'medium' ? '#ffa726' : 
-                                   '#4caf50'};
+  border-left: 4px solid ${props => {
+    if (props.type === 'crm') {
+      switch (props.status?.toLowerCase()) {
+        case 'open':
+          return '#d32f2f';
+        case 'in progress':
+          return '#f57c00';
+        case 'closed':
+          return '#4caf50';
+        default:
+          return '#90a4ae';
+      }
+    }
+    return props.severity === 'high' ? '#ff4d4d' : 
+           props.severity === 'medium' ? '#ffa726' : 
+           '#4caf50';
+  }};
 `;
 
 const PropertyRow = styled.div`
@@ -383,9 +411,7 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
                         {locationInfo.severity}
                       </PropertyValue>
                     </PropertyRow>
-                  </PropertyGroup>
 
-                  <PropertyGroup>
                     <PropertyRow>
                       <PropertyLabel>
                         <DescriptionIcon />
@@ -393,9 +419,7 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
                       </PropertyLabel>
                       <PropertyValue>{locationInfo.description}</PropertyValue>
                     </PropertyRow>
-                  </PropertyGroup>
 
-                  <PropertyGroup>
                     <PropertyRow>
                       <PropertyLabel>
                         <RepeatIcon />
@@ -403,17 +427,52 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
                       </PropertyLabel>
                       <PropertyValue>{locationInfo.timesDetected}</PropertyValue>
                     </PropertyRow>
-                    
-                    <PropertyRow>
-                      <PropertyLabel>
-                        <TimerIcon />
-                        Detected At
-                      </PropertyLabel>
-                      <PropertyValue>
-                        {new Date(locationInfo.detectedAt).toLocaleString()}
-                      </PropertyValue>
-                    </PropertyRow>
                   </PropertyGroup>
+
+                  {locationInfo.crm_case && (
+                    <PropertyGroup type="crm" status={locationInfo.crm_case.status}>
+                      <PropertyRow>
+                        <PropertyLabel>
+                          <DescriptionIcon />
+                          Case ID
+                        </PropertyLabel>
+                        <PropertyValue>{locationInfo.crm_case.case_id}</PropertyValue>
+                      </PropertyRow>
+
+                      <PropertyRow>
+                        <PropertyLabel>
+                          <CategoryIcon />
+                          Status
+                        </PropertyLabel>
+                        <PropertyValue style={{
+                          color: locationInfo.crm_case.status?.toLowerCase() === 'open' ? '#d32f2f' :
+                                 locationInfo.crm_case.status?.toLowerCase() === 'in progress' ? '#f57c00' :
+                                 '#388e3c',
+                          fontWeight: 'bold'
+                        }}>
+                          {locationInfo.crm_case.status}
+                        </PropertyValue>
+                      </PropertyRow>
+
+                      <PropertyRow>
+                        <PropertyLabel>
+                          <DescriptionIcon />
+                          Description
+                        </PropertyLabel>
+                        <PropertyValue>{locationInfo.crm_case.description}</PropertyValue>
+                      </PropertyRow>
+
+                      <PropertyRow>
+                        <PropertyLabel>
+                          <TimerIcon />
+                          Created At
+                        </PropertyLabel>
+                        <PropertyValue>
+                          {new Date(locationInfo.crm_case.createdAt).toLocaleString()}
+                        </PropertyValue>
+                      </PropertyRow>
+                    </PropertyGroup>
+                  )}
                 </>
               )}
             </PopupContent>

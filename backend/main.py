@@ -100,15 +100,50 @@ async def get_schema():
 @app.get(f"{API_PREFIX}/defect-by-location")
 async def get_defect_by_location(latitude: float, longitude: float):
     try:
+        # First get the defect
         query = """
         MATCH (d:Defect)-[:HAS_LOCATION]->(l:Location)
         WHERE l.location_lat = $latitude AND l.location_lon = $longitude
         RETURN d
         """
-        result = neo4j_connection.query(query, {"latitude": latitude, "longitude": longitude})
-        if result and len(result) > 0:
-            return {"defect": result[0]["d"]}
-        return {"defect": None}
+        defect_result = neo4j_connection.query(query, {"latitude": latitude, "longitude": longitude})
+        
+        if not defect_result:
+            return {"error": "No defect found at this location"}
+            
+        defect = defect_result[0]['d']
+        
+        # Get associated CRM case
+        crm_query = """
+        MATCH (d:Defect {defect_id: $defect_id})-[:ASSOCIATED_WITH]-(c:CRMCase)
+        RETURN c
+        """
+        crm_result = neo4j_connection.query(crm_query, {"defect_id": defect['defect_id']})
+        
+        # Prepare the response
+        response = {
+            "defect": {
+                "defect_id": defect['defect_id'],
+                "category": defect['category'],
+                "severity": defect['severity'],
+                "description": defect['description'],
+                "timesDetected": defect['timesDetected'],
+                "detectedAt": defect['detectedAt']
+            }
+        }
+        
+        # Add CRM case if exists
+        if crm_result and len(crm_result) > 0:
+            crm_case = crm_result[0]['c']
+            response["defect"]["crm_case"] = {
+                "case_id": crm_case['case_id'],
+                "status": crm_case['status'],
+                "description": crm_case['description'],
+                "createdAt": crm_case['createdAt']
+            }
+        
+        return response
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
