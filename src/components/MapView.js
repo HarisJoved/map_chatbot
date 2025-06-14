@@ -73,6 +73,8 @@ const PopupContent = styled.div`
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.1);
   animation: ${fadeIn} 0.3s ease-out;
+  min-width: 400px;
+  max-width: 500px;
 `;
 
 const PopupTitle = styled.div`
@@ -202,6 +204,8 @@ const GlobalStyle = createGlobalStyle`
       border-radius: 8px;
       overflow: hidden;
       box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+      min-width: 400px;
+      max-width: 500px;
     }
     
     .maplibregl-popup-close-button {
@@ -230,12 +234,57 @@ const GlobalStyle = createGlobalStyle`
   }
 `;
 
+const getMarkerColor = (location) => {
+  if (location.crm_case) {
+    switch (location.crm_case.status?.toLowerCase()) {
+      case 'open':
+        return '#8B0000'; // Deep Burgundy
+      case 'in progress':
+        return '#B8860B'; // Dark Goldenrod
+      case 'closed':
+        return '#2E8B57'; // Sea Green
+      default:
+        return '#8B0000'; // Deep Burgundy
+    }
+  }
+  return '#8B0000'; // Deep Burgundy if no CRM case
+};
+
 const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations = [] }) => {
   const [showPopup, setShowPopup] = useState(false);
   const [popupLocation, setPopupLocation] = useState(null);
   const [locationInfo, setLocationInfo] = useState(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
   const [errorInfo, setErrorInfo] = useState(null);
+  const [locationsWithCRM, setLocationsWithCRM] = useState([]);
+
+  // Add new useEffect to fetch CRM info for locations
+  useEffect(() => {
+    const fetchCRMInfo = async () => {
+      if (displayedLocations.length > 0) {
+        const locationsWithData = await Promise.all(
+          displayedLocations.map(async (loc) => {
+            try {
+              const res = await fetch(`http://localhost:8000/api/defect-by-location?latitude=${loc.latitude}&longitude=${loc.longitude}`);
+              const data = await res.json();
+              return {
+                ...loc,
+                crm_case: data.defect?.crm_case
+              };
+            } catch (error) {
+              console.error('Error fetching CRM info:', error);
+              return loc;
+            }
+          })
+        );
+        setLocationsWithCRM(locationsWithData);
+      } else {
+        setLocationsWithCRM([]);
+      }
+    };
+
+    fetchCRMInfo();
+  }, [displayedLocations]);
 
   // Add new useEffect for auto-zooming to show all markers
   useEffect(() => {
@@ -343,7 +392,7 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
         viewState={viewState}
         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none' }}
       >
-        {displayedLocations.map((loc, idx) => (
+        {locationsWithCRM.map((loc, idx) => (
           <Marker
             key={loc.address + loc.postcode + idx}
             longitude={loc.longitude}
@@ -351,7 +400,16 @@ const MapView = ({ viewState, setViewState, selectedLocation, displayedLocations
             anchor="bottom"
             onClick={() => handleMarkerClick(loc)}
           >
-            <RoomIcon style={{ fontSize: 36, color: '#d32f2f', filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))', cursor: 'pointer', pointerEvents: 'auto' }} />
+            <RoomIcon 
+              style={{ 
+                fontSize: 36, 
+                color: getMarkerColor(loc), 
+                filter: 'drop-shadow(0 2px 6px rgba(0,0,0,0.3))', 
+                cursor: 'pointer', 
+                pointerEvents: 'auto',
+                transition: 'color 0.3s ease'
+              }} 
+            />
           </Marker>
         ))}
         {showPopup && popupLocation && (
