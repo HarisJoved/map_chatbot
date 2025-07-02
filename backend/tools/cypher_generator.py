@@ -1,11 +1,29 @@
-from llm import llm
+from llm import llm, embeddings
 from graph import graph
 import logging
 import re
 import json
 from .schema import fetch_schema
+import os
+from pinecone import Pinecone
 
 logger = logging.getLogger(__name__)
+
+# Initialize Pinecone
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_INDEX = os.getenv("PINECONE_INDEX", "locations-index")
+
+try:
+    if PINECONE_API_KEY and PINECONE_INDEX:
+        pc = Pinecone(api_key=PINECONE_API_KEY)
+        index = pc.Index(PINECONE_INDEX)
+        logger.info("Pinecone connection initialized for vector search.")
+    else:
+        index = None
+        logger.warning("Pinecone API key or Index not configured. Vector search will be disabled.")
+except Exception as e:
+    index = None
+    logger.error(f"Failed to initialize Pinecone: {e}")
 
 # --- BEGIN NEW SCHEMA HARDCODE ---
 SCHEMA_DESCRIPTION = '''
@@ -29,6 +47,37 @@ Rules:
 def get_schema():
     return SCHEMA_DESCRIPTION
 
+def get_vector_context(query_text, top_k=3):
+    """Get context from Pinecone vector search."""
+    if not index:
+        logger.info("Pinecone index not available. Skipping vector search.")
+        return ""
+    try:
+        logger.info(f"Performing vector search for: '{query_text}'")
+        query_embedding = embeddings.embed_query(query_text)
+        results = index.query(
+            vector=query_embedding,
+            top_k=top_k,
+            include_metadata=True
+        )
+        
+        if not results['matches']:
+            logger.info("Vector search returned no results.")
+            return ""
+
+        logger.info(f"Vector search returned {len(results['matches'])} results.")
+        context_str = "Here are some similar items from the database that might be relevant:\n"
+        for i, match in enumerate(results['matches']):
+            # Log each match with its score and metadata
+            logger.info(f"  Match {i+1}: Score={match['score']:.4f}, Metadata={match['metadata']}")
+            metadata_str = ', '.join([f"{key}: {value}" for key, value in match['metadata'].items()])
+            context_str += f"- {metadata_str} (score: {match['score']:.2f})\n"
+        
+        return context_str
+    except Exception as e:
+        logger.error(f"Error querying Pinecone: {e}")
+        return ""
+
 def generate_cypher_query(user_input, context=None):
     """Generate Cypher queries based on user input and context."""
     try:
@@ -46,6 +95,7 @@ def generate_cypher_query(user_input, context=None):
             
         # For other queries, use the LLM
         schema = get_schema()
+        vector_context = get_vector_context(user_input)
         context_str = ""
         if context:
             context_items = {k: v for k, v in context.items() if v and k.startswith('last_')}
@@ -57,10 +107,14 @@ def generate_cypher_query(user_input, context=None):
         
         prompt = f"""
         You are an expert Neo4j Cypher query generator for a road defect and sensor management database. 
-        Based on the database schema below, generate a Cypher query to answer the user's question.
+        Based on the database schema and relevant examples from a vector search below, generate a Cypher query to answer the user's question.
         
+        SCHEMA:
         {schema}
         
+        VECTOR SEARCH RESULTS (for context):
+        {vector_context}
+
         USER QUESTION: {user_input}
         
         STEP 1: ANALYZE THE QUESTION
@@ -72,7 +126,7 @@ def generate_cypher_query(user_input, context=None):
         
         STEP 2: CONSIDER CONTEXT
         {context_str}
-        When the user refers to "this" or "that" with a noun, they're likely referring to these previously mentioned entities.
+        The vector search results provide examples of existing data. Use them to understand the kind of data and values present in the database, which can help in creating more accurate filters. For example, if the user asks for "high severity" and the vector search shows items with `severity: 'high'`, you know the exact value to use in the `WHERE` clause.
         
         STEP 3: GENERATE CYPHER QUERY
         Based on your analysis, generate a Cypher query that:

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import styled from 'styled-components';
-import { FaBars, FaPaperPlane, FaSpinner } from 'react-icons/fa';
+import { FaBars, FaPaperPlane, FaSpinner, FaThumbsUp, FaThumbsDown, FaRedo } from 'react-icons/fa';
 import parse from 'html-react-parser';
 
 const FloatingHamburger = styled.button`
@@ -202,6 +202,9 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
   const [lastLocations, setLastLocations] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef(null);
+  const [feedback, setFeedback] = useState({});
+  const [regeneratePrompt, setRegeneratePrompt] = useState(null);
+  const [regenerating, setRegenerating] = useState(false);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -283,6 +286,46 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const findUserMessageForBot = (botMsgIdx) => {
+    for (let i = botMsgIdx - 1; i >= 0; i--) {
+      if (messages[i].isUser) return messages[i];
+    }
+    return null;
+  };
+
+  const handleRegenerate = async (botMsgIdx) => {
+    const botMsg = messages[botMsgIdx];
+    const userMsg = findUserMessageForBot(botMsgIdx);
+    if (!userMsg) return;
+    setRegenerating(true);
+    try {
+      const res = await fetch("http://localhost:8000/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: userMsg.text })
+      });
+      const data = await res.json();
+      if (data.locations && Array.isArray(data.locations) && data.locations.length > 0) {
+        setLastLocations(data.locations);
+        onShowLocations(data.locations);
+      }
+      if (data.location) {
+        onLocationSelect(data.location);
+      }
+      setMessages(prev => prev.map((msg, idx) =>
+        idx === botMsgIdx ? { ...msg, text: data.response, timestamp: new Date() } : msg
+      ));
+      setFeedback(prev => ({ ...prev, [messages[botMsgIdx].id]: undefined }));
+      setRegeneratePrompt(null);
+    } catch (error) {
+      setMessages(prev => prev.map((msg, idx) =>
+        idx === botMsgIdx ? { ...msg, text: "Sorry, I couldn't regenerate the response. Please try again later.", timestamp: new Date() } : msg
+      ));
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   return (
     <>
       {minimized ? (
@@ -298,7 +341,7 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
             Chat Assistant
           </ChatHeaderBar>
           <MessagesContainer>
-            {messages.map(message => (
+            {messages.map((message, idx) => (
               <MessageWrapper key={message.id} isUser={message.isUser}>
                 <Message isUser={message.isUser}>
                   {message.isUser ? message.text : parse(message.text)}
@@ -306,6 +349,48 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
                 <MessageTime isUser={message.isUser}>
                   {formatTime(message.timestamp)}
                 </MessageTime>
+                {!message.isUser && idx !== 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                    <button
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: feedback[message.id] === 'like' ? '#01a3a4' : '#888', fontSize: 18 }}
+                      aria-label="Like response"
+                      disabled={!!feedback[message.id]}
+                      onClick={() => setFeedback(prev => ({ ...prev, [message.id]: 'like' }))}
+                    >
+                      <FaThumbsUp />
+                    </button>
+                    <button
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: feedback[message.id] === 'dislike' ? '#e74c3c' : '#888', fontSize: 18 }}
+                      aria-label="Dislike response"
+                      disabled={!!feedback[message.id]}
+                      onClick={() => {
+                        setFeedback(prev => ({ ...prev, [message.id]: 'dislike' }));
+                        setRegeneratePrompt(message.id);
+                      }}
+                    >
+                      <FaThumbsDown />
+                    </button>
+                    {feedback[message.id] === 'like' && <span style={{ color: '#01a3a4', fontSize: 13 }}>Thank you for your feedback!</span>}
+                  </div>
+                )}
+                {!message.isUser && feedback[message.id] === 'dislike' && regeneratePrompt === message.id && (
+                  <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 13 }}>Do you want to regenerate this response?</span>
+                    <button
+                      style={{ background: '#01a3a4', color: 'white', border: 'none', borderRadius: 16, padding: '4px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 14 }}
+                      onClick={() => handleRegenerate(idx)}
+                      disabled={regenerating}
+                    >
+                      {regenerating ? <LoadingSpinner style={{ margin: 0 }} /> : <FaRedo />} Regenerate
+                    </button>
+                    <button
+                      style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: 14 }}
+                      onClick={() => setRegeneratePrompt(null)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                )}
               </MessageWrapper>
             ))}
             <div ref={messagesEndRef} />

@@ -12,7 +12,10 @@ from database import neo4j_connection
 from config import API_PREFIX, DEBUG
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(name)s %(message)s'
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

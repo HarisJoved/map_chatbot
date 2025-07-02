@@ -12,10 +12,14 @@ class Neo4jConnection:
     def _connect(self):
         """Connect to Neo4j database."""
         try:
+            # Use the URI exactly as provided in environment variables
             self._driver = GraphDatabase.driver(
                 NEO4J_URI, 
                 auth=(NEO4J_USER, NEO4J_PASSWORD)
             )
+            # Test the connection
+            with self._driver.session() as session:
+                session.run("RETURN 1")
             logger.info("Neo4j Database connection established")
         except Exception as e:
             logger.error(f"Neo4j Database connection failed: {e}")
