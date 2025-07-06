@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import logging
 from agent import generate_response
 from tools.schema import fetch_schema
+from tools.upsert_liked_response import router as upsert_liked_response_router
 
 from models import Location, SearchRequest, SearchResponse
 from database import neo4j_connection
@@ -154,6 +155,8 @@ async def get_defect_by_location(latitude: float, longitude: float):
 @app.on_event("shutdown")
 def shutdown_event():
     neo4j_connection.close()
+
+app.include_router(upsert_liked_response_router, prefix=API_PREFIX)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=DEBUG) 

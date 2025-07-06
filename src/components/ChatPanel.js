@@ -326,6 +326,29 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
     }
   };
 
+  const handleLike = async (message, idx) => {
+    setFeedback(prev => ({ ...prev, [message.id]: 'like' }));
+    const userMsg = findUserMessageForBot(idx);
+    if (!userMsg) return;
+    try {
+      const res = await fetch('http://localhost:8000/api/upsert-liked-response', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_message: userMsg.text,
+          bot_response: message.text
+        })
+      });
+      if (res.ok) {
+        console.log('Liked response upserted to vector DB');
+      } else {
+        console.error('Failed to upsert liked response');
+      }
+    } catch (err) {
+      console.error('Error upserting liked response:', err);
+    }
+  };
+
   return (
     <>
       {minimized ? (
@@ -355,7 +378,7 @@ const ChatPanel = ({ onLocationSelect, onShowLocations }) => {
                       style={{ background: 'none', border: 'none', cursor: 'pointer', color: feedback[message.id] === 'like' ? '#01a3a4' : '#888', fontSize: 18 }}
                       aria-label="Like response"
                       disabled={!!feedback[message.id]}
-                      onClick={() => setFeedback(prev => ({ ...prev, [message.id]: 'like' }))}
+                      onClick={() => handleLike(message, idx)}
                     >
                       <FaThumbsUp />
                     </button>
