@@ -8,3 +8,4 @@ langchain-google-genai
 langchain_neo4j
 numpy
 pinecone
+graphiti-core[google-genai]

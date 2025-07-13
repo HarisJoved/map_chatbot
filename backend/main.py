@@ -1,12 +1,14 @@
 from fastapi import FastAPI, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Optional
+from typing import List, Optional, Union, Any
 import uvicorn
 from pydantic import BaseModel
 import logging
 from agent import generate_response
 from tools.schema import fetch_schema
 from tools.upsert_liked_response import router as upsert_liked_response_router
+from fiware_routes import router as fiware_router
+from fiware_processor import fiware_processor
 
 from models import Location, SearchRequest, SearchResponse
 from database import neo4j_connection
@@ -61,7 +63,7 @@ async def search_locations_post(search_request: SearchRequest):
     try:
         results = neo4j_connection.search_locations(
             search_request.search_term, 
-            search_request.limit
+            search_request.limit or 10
         )
         return SearchResponse(results=[
             Location(
@@ -77,22 +79,24 @@ async def search_locations_post(search_request: SearchRequest):
 class ChatRequest(BaseModel):
     message: str
 
+from typing import Union
+
 class ChatResponse(BaseModel):
-    response: str
+    response: Union[str, List[Any]]
     location: Optional[Location] = None
     locations: Optional[List[Location]] = None
 
 # Store last locations in a global variable (for demo; in production, use session/user context)
 last_locations = []
 
-@app.post(f"{API_PREFIX}/chat", response_model=ChatResponse)
+@app.post(f"{API_PREFIX}/chat")
 async def chat(request: ChatRequest):
     global last_locations
     try:
         logger.info(f"Received chat request: {request.message}")
         # Always use the new agent/LLM logic for all queries
         result = generate_response(request.message)
-        return ChatResponse(**result)
+        return result
     except Exception as e:
         logger.error(f"Error processing chat request: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing chat request: {str(e)}")
@@ -157,6 +161,12 @@ def shutdown_event():
     neo4j_connection.close()
 
 app.include_router(upsert_liked_response_router, prefix=API_PREFIX)
+app.include_router(fiware_router, prefix=API_PREFIX)
+
+# Ensure Graphiti indexes/constraints are built at startup
+@app.on_event("startup")
+async def build_graphiti_indexes():
+    await fiware_processor.graphiti.build_indices_and_constraints()
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=DEBUG) 
