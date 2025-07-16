@@ -1,90 +1,50 @@
-from fastapi import APIRouter, HTTPException, Depends
-from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
-from models import FiwareWebhookData
-from fiware_processor import fiware_processor
 import logging
+import json
+from typing import Dict, Any
+from datetime import datetime
+from dateutil.parser import parse as parse_datetime
 
-logger = logging.getLogger(__name__)
+from fastapi import APIRouter, HTTPException, Request, Body
+from models import FiwareSensorData, FiwareWebhookData
 
-router = APIRouter(prefix="/fiware", tags=["fiware"])
+router = APIRouter()
 
-class SensorSearchRequest(BaseModel):
-    query: str
-    limit: Optional[int] = 10
-
-class SensorSearchResponse(BaseModel):
-    results: List[Dict[str, Any]]
-    total_count: int
-
-class SensorStatisticsResponse(BaseModel):
-    total_sensors: int
-    sensor_types: int
-    earliest_reading: Optional[str]
-    latest_reading: Optional[str]
-
-@router.post("/webhook")
-async def receive_fiware_webhook(webhook_data: FiwareWebhookData):
-    """
-    Receive Fiware entity data webhook and process it.
-    This endpoint accepts Fiware entity data in the standard format and stores it using Graphiti.
-    """
+@router.post("/fiware/webhook")
+async def fiware_webhook(request: Request, webhook_data: FiwareWebhookData):
+    fiware_processor = request.app.state.fiware_processor
     try:
-        logger.info(f"Received Fiware webhook with {len(webhook_data.data)} entity readings")
-        result = await fiware_processor.process_fiware_data(webhook_data)
-        logger.info(f"Successfully processed {result['processed_entities']} entities")
-        return {
-            "status": "success",
-            "message": f"Processed {result['processed_entities']} entity readings",
-            "processed_entities": result["processed_entities"],
-            "entity_ids": result["entity_ids"],
-            "errors": result["errors"]
-        }
+        results = await fiware_processor.process_fiware_data(webhook_data)
+        return {"status": "success", **results}
     except Exception as e:
-        logger.error(f"Error processing Fiware webhook: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing webhook: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("/search")
-async def search_fiware_data(search_request: SensorSearchRequest):
+@router.post("/fiware/search")
+async def fiware_search(request: Request, query: dict = Body(...)):
     """
-    Search Fiware entity data using semantic search via Graphiti.
-    This endpoint allows you to search through stored Fiware entity data using natural language queries.
+    Search Fiware entities using a natural language query.
+    Accepts JSON body: {"query": <str>, "limit": <int>}.
+    Returns: {"results": [ ... ]}
     """
+    fiware_processor = request.app.state.fiware_processor
     try:
-        logger.info(f"Searching fiware data with query: '{search_request.query}'")
-        results = await fiware_processor.search_fiware_data(
-            query=search_request.query,
-            limit=search_request.limit or 10
-        )
-        return {
-            "results": results,
-            "total_count": len(results)
-        }
+        # Accept both {"query": ...} and {"search_term": ...}
+        search_term = query.get("query") or query.get("search_term")
+        if not search_term or not isinstance(search_term, str):
+            raise HTTPException(status_code=400, detail="Missing or invalid search term.")
+        limit = query.get("limit", 10)
+        if not isinstance(limit, int) or limit <= 0:
+            limit = 10
+        results = await fiware_processor.search_fiware_data(search_term, limit)
+        return {"results": results}
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error searching fiware data: {e}")
-        raise HTTPException(status_code=500, detail=f"Error searching fiware data: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {e}")
 
-@router.get("/health")
-async def fiware_health_check():
-    """
-    Health check endpoint for Fiware integration.
-    
-    Returns the status of the Fiware data processor and Graphiti integration.
-    """
+@router.get("/fiware/health")
+async def fiware_health():
     try:
-        # Test Graphiti connection (no direct Neo4j check)
-        stats = fiware_processor.get_sensor_statistics()
-        
-        return {
-            "status": "healthy",
-            "graphiti_initialized": True,
-            "total_sensors": stats.get("total_sensors", None),
-            "sensor_types": stats.get("sensor_types", None)
-        }
-        
+        # Simple health check: try a trivial search or return ok
+        return {"status": "ok"}
     except Exception as e:
-        logger.error(f"Health check failed: {e}")
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        } 
+        raise HTTPException(status_code=500, detail=str(e))

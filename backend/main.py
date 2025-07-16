@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Depends, Query
+from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional, Union, Any
 import uvicorn
@@ -8,11 +8,10 @@ from agent import generate_response
 from tools.schema import fetch_schema
 from tools.upsert_liked_response import router as upsert_liked_response_router
 from fiware_routes import router as fiware_router
-from fiware_processor import fiware_processor
-
 from models import Location, SearchRequest, SearchResponse
 from database import neo4j_connection
 from config import API_PREFIX, DEBUG
+from contextlib import asynccontextmanager
 
 # Configure logging
 logging.basicConfig(
@@ -21,10 +20,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from fiware_processor import FiwareDataProcessor
+    fiware_processor = FiwareDataProcessor()
+    app.state.fiware_processor = fiware_processor
+    await fiware_processor.graphiti.build_indices_and_constraints()
+    logger.info("Graphiti indices and constraints initialized.")
+    yield
+    neo4j_connection.close()
+    logger.info("Neo4j Database connection closed")
+
 app = FastAPI(
     title="Map Chat API",
     description="API for Map Chat Application with Neo4j integration",
     version="0.1.0",
+    lifespan=lifespan
 )
 
 # Configure CORS
@@ -155,18 +166,11 @@ async def get_defect_by_location(latitude: float, longitude: float):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
 
-# Shutdown event handler
-@app.on_event("shutdown")
-def shutdown_event():
-    neo4j_connection.close()
+# Remove deprecated @app.on_event startup/shutdown decorators
+# and use the lifespan context above
 
 app.include_router(upsert_liked_response_router, prefix=API_PREFIX)
 app.include_router(fiware_router, prefix=API_PREFIX)
-
-# Ensure Graphiti indexes/constraints are built at startup
-@app.on_event("startup")
-async def build_graphiti_indexes():
-    await fiware_processor.graphiti.build_indices_and_constraints()
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=DEBUG) 
