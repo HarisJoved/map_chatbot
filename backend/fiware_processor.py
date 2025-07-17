@@ -137,9 +137,9 @@ class FiwareDataProcessor:
             f"Device {eid} of type {etype}.",
             {"device_type": etype}
         )
-        # Measurement node
+        # Measurement node (unique per reading)
         measurement_node = await get_or_create_entity_node(
-            f"Measurement for {eid}",
+            f"Measurement for {eid} at {timestamp}",
             self.group_id,
             ["Measurement"],
             f"Measurement at {timestamp}",
@@ -164,13 +164,28 @@ class FiwareDataProcessor:
 
         # Optional location node and edge
         if coords:
-            loc_node = await get_or_create_entity_node(
-                f"Location for {eid}",
-                self.group_id,
-                ["Location"],
-                f"Located at lat={coords[1]}, lon={coords[0]}",
-                {"lat": coords[1], "lon": coords[0]}
-            )
+            # Helper to find existing Location node by coordinates and device
+            async def find_location_node_by_coords(group_id, eid, coords):
+                existing_nodes = await EntityNode.get_by_group_ids(self.graphiti.driver, [group_id])
+                for node in existing_nodes:
+                    if (
+                        "Location" in node.labels and
+                        node.name.startswith(f"Location for {eid}") and
+                        node.attributes.get("lat") == coords[1] and
+                        node.attributes.get("lon") == coords[0]
+                    ):
+                        return node
+                return None
+
+            loc_node = await find_location_node_by_coords(self.group_id, eid, coords)
+            if not loc_node:
+                loc_node = await get_or_create_entity_node(
+                    f"Location for {eid} at {coords[1]},{coords[0]}",
+                    self.group_id,
+                    ["Location"],
+                    f"Located at lat={coords[1]}, lon={coords[0]}",
+                    {"lat": coords[1], "lon": coords[0]}
+                )
             logger.info(f"Creating edge LOCATED_AT from {device_node.uuid} to {loc_node.uuid}")
             try:
                 located_at_edge = EntityEdge(

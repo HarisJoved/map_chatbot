@@ -20,7 +20,7 @@ def create_test_fiware_data():
             "type": "geo:json",
             "value": {
                 "type": "Point",
-                "coordinates": [144.9583, -37.8033]
+                "coordinates": [144.9583, -30.8033]
             },
             "metadata": {
                 "TimeInstant": {
@@ -37,7 +37,7 @@ def create_test_fiware_data():
         # Add dynamic attributes
         "Voltage": {
             "type": "float",
-            "value": 220.1,
+            "value": 220.0,
             "metadata": {
                 "TimeInstant": {
                     "type": "DateTime",
@@ -47,7 +47,7 @@ def create_test_fiware_data():
         },
         "current": {
             "type": "Text",
-            "value": 89.8,
+            "value": 90.0,
             "metadata": {
                 "TimeInstant": {
                     "type": "DateTime",
