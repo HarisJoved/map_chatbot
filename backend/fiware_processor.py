@@ -13,6 +13,8 @@ from graphiti_core.edges import EntityEdge
 from graphiti_core.llm_client.gemini_client import GeminiClient, LLMConfig
 from graphiti_core.embedder.gemini import GeminiEmbedder, GeminiEmbedderConfig
 from graphiti_core.cross_encoder.gemini_reranker_client import GeminiRerankerClient
+from graphiti_core.search.search_config_recipes import COMBINED_HYBRID_SEARCH_CROSS_ENCODER
+
 
 from config import (
     GOOGLE_API_KEY,
@@ -203,36 +205,51 @@ class FiwareDataProcessor:
                 logger.error(f"Failed to save edge LOCATED_AT: {e}")
         logger.info(f"Stored entity {eid} with graph structure.")
 
+
     async def search_fiware_data(self, query: str, limit: int = 10) -> list:
-        """
-        Search Fiware entities using a natural language query.
-        Args:
-            query (str): The search query string.
-            limit (int): Max number of results to return.
-        Returns:
-            List[dict]: Each dict contains id, type, timestamp, relevance_score, text, source, target, attributes.
-        """
         try:
-            results = await self.graphiti.search(query)
-            results = results[:limit]
-            formatted_results = []
-            for idx, result in enumerate(results):
-                logger.debug(f"Raw search result {idx}: {result}")
-                logger.debug(f"Result {idx} __dict__: {getattr(result, '__dict__', str(result))}")
-                created_at = getattr(result, 'created_at', None)
-                if created_at and hasattr(created_at, 'isoformat'):
-                    created_at = created_at.isoformat()
-                formatted_results.append({
-                    "id": getattr(result, 'uuid', None),
-                    "type": getattr(result, 'name', None),
-                    "timestamp": created_at,
-                    "relevance_score": getattr(result, 'score', None),
-                    "text": getattr(result, 'fact', None),
-                    "source": getattr(result, 'source_node_uuid', None),
-                    "target": getattr(result, 'target_node_uuid', None),
-                    "attributes": getattr(result, 'attributes', None),
+            # Prepare a SearchConfig with cross-encoder reranking
+            config = COMBINED_HYBRID_SEARCH_CROSS_ENCODER
+            config.limit = limit
+
+            # Use the low-level _search method
+            search_result = await self.graphiti._search(
+                query=query,
+                group_ids=[self.group_id],
+                config=config
+            )
+
+            formatted = []
+
+            # Combine node and edge results
+            combined = list(search_result.nodes) + list(search_result.edges) + list(search_result.communities or [])
+            for res in combined:
+                obj = res
+                # Determine score and common attributes
+                score = getattr(res, "score", None) or getattr(res, "relevance_score", None)
+
+                ts = getattr(obj, "created_at", None)
+                if ts and hasattr(ts, "isoformat"):
+                    ts = ts.isoformat()
+
+                # For edges, extract source/target; for nodes/communities, these are None
+                source = getattr(obj, "source_node_uuid", None)
+                target = getattr(obj, "target_node_uuid", None)
+                text = getattr(obj, "fact", None) or getattr(obj, "summary", None)
+
+                formatted.append({
+                    "id": obj.uuid,
+                    "type": getattr(obj, "name", None) or getattr(obj, "labels", None),
+                    "timestamp": ts,
+                    # "relevance_score": float(score) if score is not None else None,
+                    "text": text,
+                    "source": source,
+                    "target": target,
+                    "attributes": obj.attributes,
                 })
-            return formatted_results
+
+            return formatted
+
         except Exception as e:
             logger.error(f"Error searching fiware data with Graphiti: {e}")
             raise

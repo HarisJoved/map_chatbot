@@ -12,6 +12,8 @@ from models import Location, SearchRequest, SearchResponse
 from database import neo4j_connection
 from config import API_PREFIX, DEBUG
 from contextlib import asynccontextmanager
+from ai_agent import Neo4jAIAgent
+from ai_routes import router as ai_router
 
 # Configure logging
 logging.basicConfig(
@@ -27,6 +29,8 @@ async def lifespan(app: FastAPI):
     app.state.fiware_processor = fiware_processor
     await fiware_processor.graphiti.build_indices_and_constraints()
     logger.info("Graphiti indices and constraints initialized.")
+    # Initialize the AI agent
+    app.state.ai_agent = Neo4jAIAgent()
     yield
     neo4j_connection.close()
     logger.info("Neo4j Database connection closed")
@@ -171,6 +175,7 @@ async def get_defect_by_location(latitude: float, longitude: float):
 
 app.include_router(upsert_liked_response_router, prefix=API_PREFIX)
 app.include_router(fiware_router, prefix=API_PREFIX)
+app.include_router(ai_router)
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=DEBUG) 
